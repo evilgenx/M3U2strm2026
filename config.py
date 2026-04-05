@@ -7,7 +7,7 @@ from typing import List, Dict, Optional
 
 @dataclass
 class Config:
-    m3u: Path
+    m3u: str
     sqlite_cache_file: Path
     log_file: Path
     output_dir: Path
@@ -47,7 +47,7 @@ def load_config(path: Path) -> Config:
     else:
         raise KeyError("Config missing 'existing_media_dir' or 'existing_media_dirs'")
     return Config(
-        m3u=Path(data["m3u"]),
+        m3u=data["m3u"],
         sqlite_cache_file=Path(data["sqlite_cache_file"]),
         log_file=Path(data["log_file"]),
         output_dir=Path(data["output_dir"]),

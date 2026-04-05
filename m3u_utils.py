@@ -37,7 +37,7 @@ class Category(Enum):
 
 
 def parse_m3u(
-    path: Path,
+    m3u_source: str,
     tv_keywords: List[str],
     doc_keywords: List[str],
     movie_keywords: List[str],
@@ -51,102 +51,133 @@ def parse_m3u(
     entries: List[VODEntry] = []
     cur_title, cur_group = None, None
     seen_groups = set()
-    with path.open("r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith("#EXTINF:"):
-                if "," in line:
-                    cur_title = line.rsplit(",", 1)[-1].strip()
-                else:
-                    cur_title = line
-                m = re.search(r'group-title="([^"]+)"', line, flags=re.IGNORECASE)
-                if m:
-                    cur_group = m.group(1).strip().lower()
-                    seen_groups.add(cur_group)
-                else:
-                    cur_group = None
-            elif cur_title and line.startswith(("http://", "https://")):
-                # Check URL patterns first - most reliable indicator
-                url_lower = line.lower()
-                if "/movie/" in url_lower or "/movies/" in url_lower:
-                    cat = Category.MOVIE
-                    logging.debug(f"URL-based classification: MOVIE (URL contains '/movie/' or '/movies/') - {cur_title}")
-                elif "/series/" in url_lower:
+    
+    # Determine if source is a URL or a local file
+    if m3u_source.lower().startswith(("http://", "https://")):
+        logging.info(f"Downloading M3U from URL: {m3u_source}")
+        try:
+            from urllib.parse import urlparse, unquote
+            response = requests.get(m3u_source, stream=True, timeout=30)
+            response.raise_for_status()
+            lines_iter = response.iter_lines(decode_unicode=True)
+            # Extract filename from URL for hint detection
+            parsed = urlparse(m3u_source)
+            path_part = unquote(parsed.path)
+            m3u_filename = Path(path_part).name.lower() if path_part else ""
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Failed to download M3U from URL {m3u_source}: {e}")
+            return []
+    else:
+        # Local file
+        path = Path(m3u_source)
+        if not path.exists():
+            logging.error(f"M3U file not found: {m3u_source}")
+            return []
+        logging.info(f"Reading M3U from local file: {m3u_source}")
+        m3u_filename = path.name.lower()
+        lines_iter = path.open("r", encoding="utf-8", errors="ignore")
+    
+    # Process lines
+    for line in lines_iter:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("#EXTINF:"):
+            if "," in line:
+                cur_title = line.rsplit(",", 1)[-1].strip()
+            else:
+                cur_title = line
+            m = re.search(r'group-title="([^"]+)"', line, flags=re.IGNORECASE)
+            if m:
+                cur_group = m.group(1).strip().lower()
+                seen_groups.add(cur_group)
+            else:
+                cur_group = None
+        elif cur_title and line.startswith(("http://", "https://")):
+            # Check URL patterns first - most reliable indicator
+            url_lower = line.lower()
+            if "/movie/" in url_lower or "/movies/" in url_lower:
+                cat = Category.MOVIE
+                logging.debug(f"URL-based classification: MOVIE (URL contains '/movie/' or '/movies/') - {cur_title}")
+            elif "/series/" in url_lower:
+                cat = Category.TVSHOW
+                logging.debug(f"URL-based classification: TVSHOW (URL contains '/series/') - {cur_title}")
+            else:
+                # Fall back to original logic
+                cat = Category.MOVIE
+                group_lower = (cur_group or "").strip().lower()
+                if group_lower == "doc":
+                    cat = Category.DOCUMENTARY
+                elif group_lower == "docs":
                     cat = Category.TVSHOW
-                    logging.debug(f"URL-based classification: TVSHOW (URL contains '/series/') - {cur_title}")
-                else:
-                    # Fall back to original logic
+                elif group_lower in movie_keywords:
                     cat = Category.MOVIE
-                    group_lower = (cur_group or "").strip().lower()
-                    if group_lower == "doc":
-                        cat = Category.DOCUMENTARY
-                    elif group_lower == "docs":
-                        cat = Category.TVSHOW
-                    elif group_lower in movie_keywords:
-                        cat = Category.MOVIE
-                    elif group_lower in tv_keywords:
-                        cat = Category.TVSHOW
-                    elif group_lower in doc_keywords:
-                        cat = Category.DOCUMENTARY
-                    elif group_lower in replay_keywords:
-                        cat = Category.REPLAY
-                # Filename hint detection (secondary fallback)
-                m3u_filename = path.name.lower()
-                if "movie" in m3u_filename and cat != Category.TVSHOW:
-                    cat = Category.MOVIE
-                    logging.debug(f"Filename hint classification: MOVIE (filename contains 'movie') - {cur_title}")
-                elif "series" in m3u_filename and cat != Category.MOVIE:
+                elif group_lower in tv_keywords:
                     cat = Category.TVSHOW
-                    logging.debug(f"Filename hint classification: TVSHOW (filename contains 'series') - {cur_title}")
-                if cat not in (
-                    Category.MOVIE,
-                    Category.DOCUMENTARY,
-                    Category.TVSHOW,
-                    Category.REPLAY,
+                elif group_lower in doc_keywords:
+                    cat = Category.DOCUMENTARY
+                elif group_lower in replay_keywords:
+                    cat = Category.REPLAY
+            # Filename hint detection (secondary fallback)
+            if "movie" in m3u_filename and cat != Category.TVSHOW:
+                cat = Category.MOVIE
+                logging.debug(f"Filename hint classification: MOVIE (filename contains 'movie') - {cur_title}")
+            elif "series" in m3u_filename and cat != Category.MOVIE:
+                cat = Category.TVSHOW
+                logging.debug(f"Filename hint classification: TVSHOW (filename contains 'series') - {cur_title}")
+            if cat not in (
+                Category.MOVIE,
+                Category.DOCUMENTARY,
+                Category.TVSHOW,
+                Category.REPLAY,
+            ):
+                if re.search(r"[Ss]\d{1,2}\s*[Ee]\d{1,2}", cur_title):
+                    cat = Category.TVSHOW
+                elif re.search(r"\(\d{4}\)\s*$", cur_title) or re.search(
+                    r"[-–]\s*\d{4}\s*$", cur_title
                 ):
-                    if re.search(r"[Ss]\d{1,2}\s*[Ee]\d{1,2}", cur_title):
-                        cat = Category.TVSHOW
-                    elif re.search(r"\(\d{4}\)\s*$", cur_title) or re.search(
-                        r"[-–]\s*\d{4}\s*$", cur_title
-                    ):
-                        cat = Category.MOVIE
-                title_norm = _ascii(_normalize_unicode(cur_title.lower()))
-                skip = False
-                if cat == Category.TVSHOW:
-                    for kw in ignore_keywords.get("tvshows", []):
-                        if kw.lower() in title_norm:
-                            logging.debug(f"Skipping ignored TV show: {cur_title}")
-                            skip = True
-                            break
-                elif cat == Category.MOVIE:
-                    for kw in ignore_keywords.get("movies", []):
-                        if kw.lower() in title_norm:
-                            logging.debug(f"Skipping ignored Movie: {cur_title}")
-                            skip = True
-                            break
-                elif cat == Category.DOCUMENTARY:
-                    for kw in ignore_keywords.get("documentaries", []):
-                        if kw.lower() in title_norm:
-                            logging.debug(f"Skipping ignored Documentary: {cur_title}")
-                            skip = True
-                            break
-                if skip:
-                    cur_title, cur_group = None, None
-                    continue
-                year = extract_year(cur_title)
-                entries.append(
-                    VODEntry(
-                        raw_title=cur_title,
-                        safe_title=sanitize_title(cur_title),
-                        url=line,
-                        category=cat,
-                        group=cur_group,
-                        year=year,
-                    )
-                )
+                    cat = Category.MOVIE
+            title_norm = _ascii(_normalize_unicode(cur_title.lower()))
+            skip = False
+            if cat == Category.TVSHOW:
+                for kw in ignore_keywords.get("tvshows", []):
+                    if kw.lower() in title_norm:
+                        logging.debug(f"Skipping ignored TV show: {cur_title}")
+                        skip = True
+                        break
+            elif cat == Category.MOVIE:
+                for kw in ignore_keywords.get("movies", []):
+                    if kw.lower() in title_norm:
+                        logging.debug(f"Skipping ignored Movie: {cur_title}")
+                        skip = True
+                        break
+            elif cat == Category.DOCUMENTARY:
+                for kw in ignore_keywords.get("documentaries", []):
+                    if kw.lower() in title_norm:
+                        logging.debug(f"Skipping ignored Documentary: {cur_title}")
+                        skip = True
+                        break
+            if skip:
                 cur_title, cur_group = None, None
+                continue
+            year = extract_year(cur_title)
+            entries.append(
+                VODEntry(
+                    raw_title=cur_title,
+                    safe_title=sanitize_title(cur_title),
+                    url=line,
+                    category=cat,
+                    group=cur_group,
+                    year=year,
+                )
+            )
+            cur_title, cur_group = None, None
+    
+    # Close file if we opened it (local file)
+    if not m3u_source.lower().startswith(("http://", "https://")):
+        if hasattr(lines_iter, 'close'):
+            lines_iter.close()
+    
     cat_counts: Dict[str, int] = {}
     for e in entries:
         cat_counts[e.category.value] = cat_counts.get(e.category.value, 0) + 1
