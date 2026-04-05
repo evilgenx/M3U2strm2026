@@ -9,7 +9,6 @@ Syncs an IPTV VOD playlist with local media using `.strm` files. Scans local med
 - Filters by keyword ignore lists (configurable per category)
 - Creates `.strm` files pointing to IPTV stream URLs
 - Cleans up orphaned `.strm` files
-- Optional Emby library refresh after updates
 - SQLite cache for performance
 
 ## Quick Start
@@ -39,7 +38,6 @@ Syncs an IPTV VOD playlist with local media using `.strm` files. Scans local med
 | `output_dir` | Where `.strm` files are written |
 | `existing_media_dirs` | Directories to scan for local media |
 | `ignore_keywords` | Keywords to exclude (movies/tvshows) |
-| `emby_api_url` / `emby_api_key` | Optional Emby refresh |
 | `dry_run` | Test mode (no files written) |
 
 See `config.json.example` for all options.
@@ -52,7 +50,6 @@ See `config.json.example` for all options.
 4. **Compare** – Skip titles already present locally
 5. **Create `.strm` files** – Write stream links for missing content
 6. **Clean up** – Remove orphaned `.strm` files
-7. **Refresh Emby** – If configured, trigger library update
 
 Excluded titles are logged to `excluded_entries.txt`.
 

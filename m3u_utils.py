@@ -36,6 +36,89 @@ class Category(Enum):
     REPLAY = "replay"
 
 
+class TMDbRateLimitError(Exception):
+    pass
+
+
+def _tmdb_get(url: str, api_key: str) -> Optional[dict]:
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 429:
+            raise TMDbRateLimitError("TMDb rate limit hit (429 Too Many Requests)")
+        resp.raise_for_status()
+        return resp.json()
+    except TMDbRateLimitError:
+        raise
+    except Exception as e:
+        logging.error(f"TMDb request failed for {url}: {e}")
+        return None
+
+
+def _movie_tmdb_lookup(
+    title: str, year: Optional[int], allowed_countries: List[str], api_key: str
+) -> bool:
+    base_url = "https://api.themoviedb.org/3/search/movie"
+    params = {"api_key": api_key, "query": title.strip(), "language": "en-US"}
+    if year:
+        params["year"] = year
+    try:
+        resp = requests.get(base_url, params=params, timeout=10)
+        if resp.status_code == 429:
+            raise TMDbRateLimitError("TMDb rate limit hit (429 Too Many Requests)")
+        resp.raise_for_status()
+        data = resp.json()
+    except TMDbRateLimitError:
+        raise
+    except Exception as e:
+        logging.error(f"TMDb request failed for {title} ({year}): {e}")
+        return False
+    if not data.get("results") and year:
+        logging.debug(f"TMDb: No match for '{title}' ({year}), retrying without year")
+        params.pop("year", None)
+        try:
+            resp = requests.get(base_url, params=params, timeout=10)
+            if resp.status_code == 429:
+                raise TMDbRateLimitError("TMDb rate limit hit (429 Too Many Requests)")
+            resp.raise_for_status()
+            data = resp.json()
+        except TMDbRateLimitError:
+            raise
+        except Exception as e:
+            logging.error(f"TMDb retry (no year) failed for {title}: {e}")
+            return False
+    if not data.get("results"):
+        logging.debug(f"TMDb: No movie match for '{title}' ({year})")
+        return False
+    best = data["results"][0]
+    movie_id = best.get("id")
+    if not movie_id:
+        logging.debug(f"TMDb: No ID for movie '{title}' ({year})")
+        return False
+    lang = best.get("original_language", "").lower()
+    if lang == "ja":
+        logging.debug(f"TMDb: Excluding '{title}' ({year}) - original language Japanese")
+        return False
+    if lang == "en" and not allowed_countries:
+        logging.debug(f"TMDb: Movie '{title}' allowed by English language (no country filter)")
+        return True
+    release_url = f"https://api.themoviedb.org/3/movie/{movie_id}/release_dates"
+    try:
+        releases = requests.get(release_url, params={"api_key": api_key}, timeout=10).json()
+    except Exception as e:
+        logging.error(f"TMDb release info failed for {title} ({year}): {e}")
+        return False
+    results = releases.get("results", [])
+    countries = {r.get("iso_3166_1") for r in results if isinstance(r, dict) and "iso_3166_1" in r}
+    if any(c in allowed_countries for c in countries):
+        logging.debug(f"TMDb: Movie '{title}' allowed by release country: {countries}")
+        return True
+    if lang == "en":
+        logging.debug(f"TMDb: Movie '{title}' allowed by English language fallback (no allowed country match)")
+        return True
+    logging.debug(f"TMDb: Excluding movie '{title}' ({year}) - no allowed country match")
+    return False
+
+
 def parse_m3u(
     m3u_source: str,
     tv_keywords: List[str],
@@ -205,19 +288,20 @@ def split_by_market_filter(
     cache: "SQLiteCache" = None,
 ) -> Tuple[List[VODEntry], List[VODEntry]]:
     """
-    Filter entries based on ignore keywords only (TMDB filtering removed).
+    Filter entries based on ignore keywords and TMDB for movies/documentaries.
+    TV shows bypass TMDB filtering (always allowed).
     
-    Parameters maintained for backward compatibility:
-    - allowed_movie_countries: Ignored (no longer used)
-    - allowed_tv_countries: Ignored (no longer used)
-    - api_key: Ignored (no longer used)
-    - cache: Ignored (no longer used)
-    - max_retries: Ignored (no longer used)
+    Parameters:
+    - allowed_movie_countries: used for TMDB movie filtering
+    - allowed_tv_countries: ignored (TV shows bypass TMDB)
+    - api_key: TMDB API key
+    - cache: ignored (no longer used)
+    - max_retries: retry attempts for TMDB rate limits
     """
     if max_workers is None:
         max_workers = 10
     
-    logging.info(f"Filtering using {max_workers} CPU workers (TMDB filtering removed)")
+    logging.info(f"Filtering using {max_workers} CPU workers (TMDB for movies/docs only)")
     
     allowed, excluded = [], []
     ignore_keywords = ignore_keywords or {}
@@ -230,8 +314,19 @@ def split_by_market_filter(
         "allowed_total": 0,
     }
 
+    def with_retry(fn, *args, **kwargs):
+        delay = 1
+        for attempt in range(max_retries):
+            try:
+                return fn(*args, **kwargs)
+            except TMDbRateLimitError:
+                logging.warning(f"TMDb rate limit hit, retrying in {delay:.1f}s...")
+                time.sleep(delay + random.uniform(0, 1.0))
+                delay = min(delay * 2, 30)
+        logging.error(f"Max retries exceeded for {fn.__name__} with args={args}")
+        return False
+
     def process_entry(e: VODEntry) -> Tuple[VODEntry, bool, str]:
-        # Get ignore list for this category
         ignore_list = []
         if e.category == Category.MOVIE:
             ignore_list = ignore_keywords.get("movies", [])
@@ -245,13 +340,23 @@ def split_by_market_filter(
             logging.debug(f"Ignored by keyword: {e.raw_title}")
             return (e, False, "ignored")
         
-        # All non-ignored entries are allowed (TMDB filtering removed)
         if e.category == Category.MOVIE:
-            return (e, True, "movie")
+            year = extract_year(e.raw_title)
+            title_clean = sanitize_title(e.raw_title)
+            title_clean = re.sub(r"\s*\(\d{4}\)\s*", "", title_clean)
+            title_clean = re.sub(r"\s*-\s*\d{4}$", "", title_clean).strip()
+            ok = with_retry(_movie_tmdb_lookup, title_clean, year, allowed_movie_countries, api_key)
+            return (e, ok, "movie")
         elif e.category == Category.TVSHOW:
+            # TV shows bypass TMDB filtering (always allowed)
             return (e, True, "tv")
         elif e.category == Category.DOCUMENTARY:
-            return (e, True, "doc")
+            year = extract_year(e.raw_title)
+            title_clean = sanitize_title(e.raw_title)
+            title_clean = re.sub(r"\s*\(\d{4}\)\s*", "", title_clean)
+            title_clean = re.sub(r"\s*-\s*\d{4}$", "", title_clean).strip()
+            ok = with_retry(_movie_tmdb_lookup, title_clean, year, allowed_movie_countries, api_key)
+            return (e, ok, "doc")
         else:
             # Unknown category - exclude
             return (e, False, "other")
@@ -293,7 +398,7 @@ def split_by_market_filter(
             else:
                 excluded.append(e)
 
-    logging.info("Filter statistics (TMDB filtering removed):")
+    logging.info("Filter statistics (TMDB for movies/docs only, TV shows bypassed):")
     logging.info(
         f"  Movies: {stats['movies_checked']} checked, "
         f"{stats['movies_allowed']} allowed, {stats['movies_excluded']} excluded"

@@ -7,8 +7,6 @@
   "existing_media_dirs": [
     "/media/Existing"
   ],
-  "emby_api_url": "https://",
-  "emby_api_key": "",
   "dry_run": false,
   "max_workers": 8,
   "allowed_movie_countries": [

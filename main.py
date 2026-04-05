@@ -3,7 +3,6 @@ import re
 import concurrent.futures
 from pathlib import Path
 from collections import defaultdict
-import requests
 import config
 from core import (
     SQLiteCache,
@@ -29,17 +28,6 @@ from strm_utils import (
 )
 
 
-def touch_emby(api_url: str, api_key: str):
-    try:
-        refresh_url = api_url.rstrip("/") + "/Library/Refresh"
-        headers = {"X-Emby-Token": api_key}
-        r = requests.post(refresh_url, headers=headers, timeout=10)
-        if r.status_code in (200, 204):
-            logging.info(f"Triggered Emby library refresh via {refresh_url}")
-        else:
-            logging.warning(f"Emby refresh failed: {r.status_code} - {r.text} ({refresh_url})")
-    except Exception as e:
-        logging.error(f"Emby refresh error: {e}", exc_info=True)
 
 
 def write_excluded_report(path: Path, excluded, allowed_count: int, enabled: bool):
@@ -294,11 +282,6 @@ def run_pipeline():
     
     logging.info("Cleaning up orphan STRMs...")
     cleanup_strm_tree(output_dir, new_cache)
-    if not cfg.dry_run and getattr(cfg, "emby_api_url", None) and getattr(cfg, "emby_api_key", None):
-        logging.info("Triggering Emby library refresh...")
-        touch_emby(cfg.emby_api_url, cfg.emby_api_key)
-    else:
-        logging.info("Skipping Emby refresh (either dry_run or not configured)")
     logging.info(
         f"VOD/Strm process complete: {written_count} STRMs written, {skipped_count} skipped, {len(excluded)} excluded"
     )

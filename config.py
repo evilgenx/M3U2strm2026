@@ -23,8 +23,6 @@ class Config:
     movie_group_keywords: List[str] = None
     replay_group_keywords: List[str] = None
     ignore_keywords: Dict[str, List[str]] = None
-    emby_api_url: Optional[str] = None
-    emby_api_key: Optional[str] = None
 
 
 def _coerce_bool(val, default=False) -> bool:
@@ -63,6 +61,4 @@ def load_config(path: Path) -> Config:
         movie_group_keywords=data.get("movie_group_keywords", []),
         replay_group_keywords=data.get("replay_group_keywords", []),
         ignore_keywords=data.get("ignore_keywords", {}),
-        emby_api_url=data.get("emby_api_url"),
-        emby_api_key=data.get("emby_api_key"),
     )
