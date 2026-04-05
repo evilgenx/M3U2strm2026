@@ -166,6 +166,7 @@ def run_pipeline():
         api_key=cfg.tmdb_api,
         max_workers=cfg.max_workers,
         ignore_keywords=cfg.ignore_keywords,
+        cache=cache,  # Cache parameter maintained for backward compatibility (no longer used)
     )
     allowed.extend(reused_allowed)
     excluded.extend(reused_excluded)
@@ -283,7 +284,14 @@ def run_pipeline():
         else:
             key = make_cache_key(e.raw_title)
         new_cache[key] = {"url": e.url, "path": None, "allowed": 0}
-    cache.replace_strm_cache(new_cache)
+    
+    # Use incremental sync instead of full replace for better performance
+    sync_stats = cache.sync_strm_cache(new_cache)
+    logging.info(
+        f"Cache sync complete: {sync_stats['updated']} entries updated, "
+        f"{sync_stats['deleted']} deleted, {sync_stats['total']} total"
+    )
+    
     logging.info("Cleaning up orphan STRMs...")
     cleanup_strm_tree(output_dir, new_cache)
     if not cfg.dry_run and getattr(cfg, "emby_api_url", None) and getattr(cfg, "emby_api_key", None):

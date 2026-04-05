@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import sqlite3
+import threading
 import unicodedata
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -106,76 +107,159 @@ def canonical_tv_key(show_with_year: str, season: int, episode: int) -> str:
     return key
 
 
+import json
+import time
+from typing import Any, Dict, Optional, Tuple
+
 class SQLiteCache:
     def __init__(self, db_path: Path):
-        self.conn = sqlite3.connect(str(db_path))
+        # Use check_same_thread=False to allow connection sharing across threads
+        self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._lock = threading.RLock()
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.ensure_tables()
 
     def ensure_tables(self):
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS existing_media (
-                key TEXT PRIMARY KEY,
-                category TEXT
-            )
-        """)
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS strm_cache (
-                key TEXT PRIMARY KEY,
-                url TEXT,
-                path TEXT,
-                allowed INTEGER
-            )
-        """)
-        cols = [row[1] for row in self.conn.execute("PRAGMA table_info(strm_cache)")]
-        if "allowed" not in cols:
-            self.conn.execute("ALTER TABLE strm_cache ADD COLUMN allowed INTEGER")
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS existing_media (
+                    key TEXT PRIMARY KEY,
+                    category TEXT
+                )
+            """)
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS strm_cache (
+                    key TEXT PRIMARY KEY,
+                    url TEXT,
+                    path TEXT,
+                    allowed INTEGER
+                )
+            """)
+            
+            cols = [row[1] for row in self.conn.execute("PRAGMA table_info(strm_cache)")]
+            if "allowed" not in cols:
+                self.conn.execute("ALTER TABLE strm_cache ADD COLUMN allowed INTEGER")
+            
+            # Create indexes for better query performance
+            self.conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_strm_cache_allowed 
+                ON strm_cache(allowed)
+            """)
+            self.conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_strm_cache_url_path 
+                ON strm_cache(url, path)
+            """)
+            
+            # Optimize database settings for better performance
+            self.conn.execute("PRAGMA synchronous = NORMAL;")
+            self.conn.execute("PRAGMA journal_size_limit = 67108864;")  # 64MB
+            self.conn.execute("PRAGMA cache_size = -2000;")  # 2MB cache
+            self.conn.execute("PRAGMA mmap_size = 268435456;")  # 256MB mmap
+            
+            self.conn.commit()
 
     def replace_existing_media(self, entries: Dict[str, str]):
-        self.conn.execute("DELETE FROM existing_media")
-        self.conn.executemany(
-            "INSERT INTO existing_media (key, category) VALUES (?, ?)",
-            ((k, v) for k, v in entries.items()),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute("DELETE FROM existing_media")
+            self.conn.executemany(
+                "INSERT INTO existing_media (key, category) VALUES (?, ?)",
+                ((k, v) for k, v in entries.items()),
+            )
+            self.conn.commit()
 
     def existing_media_dict(self) -> Dict[str, str]:
-        return {
-            row[0]: row[1]
-            for row in self.conn.execute("SELECT key, category FROM existing_media")
-        }
+        with self._lock:
+            return {
+                row[0]: row[1]
+                for row in self.conn.execute("SELECT key, category FROM existing_media")
+            }
 
     def strm_cache_dict(self) -> Dict[str, Dict[str, Optional[str]]]:
-        d: Dict[str, Dict[str, Optional[str]]] = {}
-        for key, url, path, allowed in self.conn.execute(
-            "SELECT key, url, path, allowed FROM strm_cache"
-        ):
-            d[key] = {"url": url, "path": path, "allowed": allowed}
-        return d
+        with self._lock:
+            d: Dict[str, Dict[str, Optional[str]]] = {}
+            for key, url, path, allowed in self.conn.execute(
+                "SELECT key, url, path, allowed FROM strm_cache"
+            ):
+                d[key] = {"url": url, "path": path, "allowed": allowed}
+            return d
 
     def replace_strm_cache(self, cache: Dict[str, Dict[str, Optional[str]]]):
-        self.conn.execute("DELETE FROM strm_cache")
-        rows = [
-            (k, v.get("url"), v.get("path"), v.get("allowed"))
-            for k, v in cache.items()
-        ]
-        self.conn.executemany(
-            "INSERT INTO strm_cache (key, url, path, allowed) VALUES (?, ?, ?, ?)", rows
-        )
-        self.conn.commit()
+        """Replace entire cache with new data (legacy method)."""
+        with self._lock:
+            self.conn.execute("DELETE FROM strm_cache")
+            rows = [
+                (k, v.get("url"), v.get("path"), v.get("allowed"))
+                for k, v in cache.items()
+            ]
+            self.conn.executemany(
+                "INSERT OR REPLACE INTO strm_cache (key, url, path, allowed) VALUES (?, ?, ?, ?)", rows
+            )
+            self.conn.commit()
+
+    def sync_strm_cache(self, new_cache: Dict[str, Dict[str, Optional[str]]]):
+        """
+        Synchronize cache incrementally by updating only changed entries.
+        More efficient than replace_strm_cache for large datasets.
+        """
+        with self._lock:
+            # Get current cache from database
+            current = {}
+            for key, url, path, allowed in self.conn.execute(
+                "SELECT key, url, path, allowed FROM strm_cache"
+            ):
+                current[key] = {"url": url, "path": path, "allowed": allowed}
+            
+            # Find entries to update or insert
+            to_update = []
+            for key, new_data in new_cache.items():
+                old_data = current.get(key)
+                if old_data is None:
+                    # New entry
+                    to_update.append((key, new_data.get("url"), new_data.get("path"), new_data.get("allowed")))
+                else:
+                    # Check if any field changed
+                    if (old_data.get("url") != new_data.get("url") or
+                        old_data.get("path") != new_data.get("path") or
+                        old_data.get("allowed") != new_data.get("allowed")):
+                        to_update.append((key, new_data.get("url"), new_data.get("path"), new_data.get("allowed")))
+            
+            # Find entries to delete (present in current but not in new_cache)
+            to_delete = [key for key in current if key not in new_cache]
+            
+            # Execute updates in a single transaction
+            if to_update:
+                self.conn.executemany(
+                    "INSERT OR REPLACE INTO strm_cache (key, url, path, allowed) VALUES (?, ?, ?, ?)",
+                    to_update
+                )
+            
+            if to_delete:
+                placeholders = ','.join(['?'] * len(to_delete))
+                self.conn.execute(f"DELETE FROM strm_cache WHERE key IN ({placeholders})", to_delete)
+            
+            self.conn.commit()
+            
+            # Return statistics for logging
+            return {
+                "updated": len(to_update),
+                "deleted": len(to_delete),
+                "total": len(new_cache)
+            }
 
     def update_strm(
         self, key: str, url: str, path: Optional[str], allowed: Optional[int]
     ):
-        self.conn.execute(
-            "INSERT OR REPLACE INTO strm_cache (key, url, path, allowed) VALUES (?, ?, ?, ?)",
-            (key, url, path, allowed),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO strm_cache (key, url, path, allowed) VALUES (?, ?, ?, ?)",
+                (key, url, path, allowed),
+            )
+            self.conn.commit()
+
 
     def close(self):
-        self.conn.close()
+        with self._lock:
+            self.conn.close()
 
 
 def _extract_season_episode(name: str) -> Optional[Tuple[int, int]]:

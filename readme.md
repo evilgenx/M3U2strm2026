@@ -14,8 +14,9 @@ This script keeps your **VOD library organized and current** by syncing an IPTV 
    - Parses your IPTV `.m3u` file.
    - Lists all available titles and their stream URLs.
 
-3. **Filter by Region**
-   - Uses the TMDb API to confirm each title is from an allowed country (e.g., US, GB, CA).
+3. **Filter by Keywords** (TMDB country filtering removed)
+   - Only excludes titles that match configured ignore keywords.
+   - All other titles are allowed regardless of country of origin.
    - Excluded titles are logged to `excluded_entries.txt` for review.
 
 4. **Compare and Sync**
@@ -35,7 +36,7 @@ This script keeps your **VOD library organized and current** by syncing an IPTV 
 ## Result
 
 - Only **new or missing** titles are added as `.strm` links.
-- **Out-of-region** content is excluded.
+- **Keyword-ignored** content is excluded (based on configuration).
 - **Local media** remains untouched.
 - **Emby** (if configured) updates automatically.
 
