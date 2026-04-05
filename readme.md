@@ -1,66 +1,91 @@
-# M3U2 VOD Script Overview
+# M3U2strm2026
 
-This script keeps your **VOD library organized and current** by syncing an IPTV playlist (`VOD.m3u`) with your local media and `.strm` files.
+Syncs an IPTV VOD playlist with local media using `.strm` files. Scans local media directories, compares against an M3U playlist, and creates `.strm` files for missing content.
 
----
+## Features
+
+- Scans local movie and TV directories to avoid duplicates
+- Parses M3U playlists, deduplicates entries  
+- Filters by keyword ignore lists (configurable per category)
+- Creates `.strm` files pointing to IPTV stream URLs
+- Cleans up orphaned `.strm` files
+- Optional Emby library refresh after updates
+- SQLite cache for performance
+
+## Quick Start
+
+1. **Clone and install**
+   ```bash
+   git clone https://github.com/evilgenx/M3U2strm2026.git
+   cd M3U2strm2026
+   ```
+
+2. **Configure**
+   - Copy `config.json.example` to `config.json`
+   - Edit paths, directories, and keywords as needed
+
+3. **Run**
+   ```bash
+   python main.py
+   ```
+
+## Configuration
+
+`config.json` settings:
+
+| Key | Purpose |
+|-----|---------|
+| `m3u` | Path to VOD.m3u playlist |
+| `output_dir` | Where `.strm` files are written |
+| `existing_media_dirs` | Directories to scan for local media |
+| `ignore_keywords` | Keywords to exclude (movies/tvshows) |
+| `emby_api_url` / `emby_api_key` | Optional Emby refresh |
+| `dry_run` | Test mode (no files written) |
+
+See `config.json.example` for all options.
 
 ## How It Works
 
-1. **Scan Local Media**
-   - Searches your existing movie and TV folders.
-   - Builds a cache of everything you already have locally.
+1. **Scan local media** – Build cache of existing movies/TV shows
+2. **Parse M3U** – Extract titles, URLs, categorize (movie/TV/doc)
+3. **Filter** – Exclude entries matching ignore keywords
+4. **Compare** – Skip titles already present locally
+5. **Create `.strm` files** – Write stream links for missing content
+6. **Clean up** – Remove orphaned `.strm` files
+7. **Refresh Emby** – If configured, trigger library update
 
-2. **Read the VOD Playlist**
-   - Parses your IPTV `.m3u` file.
-   - Lists all available titles and their stream URLs.
+Excluded titles are logged to `excluded_entries.txt`.
 
-3. **Filter by Keywords** (TMDB country filtering removed)
-   - Only excludes titles that match configured ignore keywords.
-   - All other titles are allowed regardless of country of origin.
-   - Excluded titles are logged to `excluded_entries.txt` for review.
+## Project Structure
 
-4. **Compare and Sync**
-   - If a title already exists locally, it's skipped.
-   - If missing, the script creates a `.strm` file pointing to the IPTV stream.
-   - Maintains a SQLite cache to track what's new, changed, or skipped.
+- `main.py` – Orchestrates the pipeline  
+- `core.py` – Media scanning, title normalization, cache
+- `m3u_utils.py` – M3U parsing, categorization
+- `strm_utils.py` – `.strm` file creation and cleanup
+- `config.py` – Configuration loader
+- `config.json` – User settings
 
-5. **Clean Up**
-   - Removes `.strm` files that are no longer valid or missing from the playlist.
-   - Cleans up empty folders or NFO-only directories.
+## Output Format
 
-6. **Optional: Refresh Emby**
-   - After updates, the script can automatically trigger an Emby library refresh.
+`.strm` files are organized by category:
 
----
-
-## Result
-
-- Only **new or missing** titles are added as `.strm` links.
-- **Keyword-ignored** content is excluded (based on configuration).
-- **Local media** remains untouched.
-- **Emby** (if configured) updates automatically.
-
----
-
-## Files and Roles
-
-| File | Purpose |
-|------|----------|
-| `main.py` | Orchestrates the full process |
-| `core.py` | Scans local media, normalizes titles, manages cache |
-| `m3u_utils.py` | Parses `.m3u`, applies TMDb filters |
-| `strm_utils.py` | Writes and cleans `.strm` files |
-| `config.py` / `config.json` | Settings, paths, API keys, and filters |
-
----
-
-## Example Output Structure
+```
 /media/m3u2strm/
-│
 ├── Movies/
-│ ├── Heat (1995)/Heat (1995).strm
-│ └── Inception (2010)/Inception (2010).strm
-│
-└── TV Shows/
-├── Breaking Bad (2008)/Season 01/Breaking Bad (2008) S01E01.strm
-└── The Office (2005)/Season 02/The Office (2005) S02E03.strm
+│   └── Movie Title (Year)/
+│       └── Movie Title (Year).strm
+├── TV Shows/
+│   └── Show Name (Year)/
+│       └── Season 01/
+│           └── Show Name (Year) S01E01.strm
+└── Documentaries/
+    └── Doc Title (Year)/
+        └── Doc Title (Year).strm
+```
+
+## Notes
+
+- **TMDB country filtering has been removed** – The `tmdb_api` field is kept for backward compatibility but is unused.
+- Keywords in `ignore_keywords` are case-insensitive substring matches.
+- The SQLite cache (`caches.db`) tracks processed entries between runs.
+- Set `dry_run: true` to test configuration without writing files.
