@@ -82,7 +82,7 @@ Excluded titles are logged to `excluded_entries.txt`.
 
 ## Notes
 
-- **TMDB country filtering has been removed** – The `tmdb_api` field is kept for backward compatibility but is unused.
+- TMDb-based country filtering has been removed — no API key needed.
 - Keywords in `ignore_keywords` are case-insensitive substring matches.
 - The SQLite cache (`caches.db`) tracks processed entries between runs.
 - Set `dry_run: true` to test configuration without writing files.

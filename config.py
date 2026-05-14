@@ -12,11 +12,8 @@ class Config:
     log_file: Path
     output_dir: Path
     existing_media_dirs: List[Path]
-    tmdb_api: str = ""  # Kept for backward compatibility, no longer used
     dry_run: bool = False
     max_workers: Optional[int] = None
-    allowed_movie_countries: List[str] = None
-    allowed_tv_countries: List[str] = None
     write_non_us_report: bool = True
     tv_group_keywords: List[str] = None
     doc_group_keywords: List[str] = None
@@ -50,11 +47,8 @@ def load_config(path: Path) -> Config:
         log_file=Path(data["log_file"]),
         output_dir=Path(data["output_dir"]),
         existing_media_dirs=existing_dirs,
-        tmdb_api=data.get("tmdb_api", ""),  # Optional field, default to empty string
         dry_run=_coerce_bool(data.get("dry_run", False)),
         max_workers=mw,
-        allowed_movie_countries=data.get("allowed_movie_countries", ["US"]),
-        allowed_tv_countries=data.get("allowed_tv_countries", ["US"]),
         write_non_us_report=_coerce_bool(data.get("write_non_us_report", True)),
         tv_group_keywords=data.get("tv_group_keywords", []),
         doc_group_keywords=data.get("doc_group_keywords", []),

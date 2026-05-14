@@ -149,24 +149,21 @@ def run_pipeline():
             to_check.append(e)
     allowed, excluded = split_by_market_filter(
         to_check,
-        allowed_movie_countries=cfg.allowed_movie_countries,
-        allowed_tv_countries=cfg.allowed_tv_countries,
-        api_key=cfg.tmdb_api,
-        max_workers=cfg.max_workers,
         ignore_keywords=cfg.ignore_keywords,
-        cache=cache,  # Cache parameter maintained for backward compatibility (no longer used)
     )
     allowed.extend(reused_allowed)
     excluded.extend(reused_excluded)
     write_excluded_report(output_dir / "excluded_entries.txt", excluded, len(allowed), write_non_us_report)
-    existing_keys = set(existing.keys())
     strm_cache = cache.strm_cache_dict()
     new_cache = strm_cache.copy()
     written_count = 0
     skipped_count = 0
 
     def process_entry(e):
-        nonlocal written_count, skipped_count
+        """
+        Process a single allowed entry and return a result dict.
+        This function does NOT mutate any shared state, making it thread-safe.
+        """
         key = None
         rel_path = None
         logging.debug(
@@ -184,7 +181,7 @@ def run_pipeline():
         ignore = ignore_keywords.get("tvshows" if e.category == Category.TVSHOW else "movies", [])
         if any(word.lower() in e.raw_title.lower() for word in ignore):
             logging.debug("Ignored by keyword: %s", e.raw_title)
-            return
+            return None
         try:
             if e.category == Category.MOVIE:
                 key = canonical_movie_key(e.raw_title)
@@ -219,33 +216,40 @@ def run_pipeline():
                 rel_path = doc_strm_path(output_dir, e)
             else:
                 logging.warning("Unknown category %s for entry %r", e.category, e.raw_title)
-                return
+                return None
             if not key:
                 logging.error("No cache key generated for %r", e.raw_title)
-                return
+                return None
             abs_path = rel_path
             url = e.url
             if key in existing_keys:
-                skipped_count += 1
                 logging.debug("Skip existing media: %s", e.raw_title)
-                new_cache[key] = {"url": e.url, "path": None, "allowed": 1}
-                return
+                return {
+                    "action": "skipped_existing",
+                    "key": key,
+                    "cache_entry": {"url": e.url, "path": None, "allowed": 1},
+                }
             cached = strm_cache.get(key)
             if cached:
                 cached_path = Path(cached.get("path") or "").resolve() if cached.get("path") else None
                 if cached.get("url") == url and cached.get("path") and cached_path == abs_path.resolve():
-                    skipped_count += 1
                     logging.debug("Skip cached (unchanged): %s", e.raw_title)
-                    new_cache[key] = {
-                        "url": cached.get("url"),
-                        "path": cached.get("path"),
-                        "allowed": cached.get("allowed", 1),
+                    return {
+                        "action": "skipped_cached",
+                        "key": key,
+                        "cache_entry": {
+                            "url": cached.get("url"),
+                            "path": cached.get("path"),
+                            "allowed": cached.get("allowed", 1),
+                        },
                     }
-                    return
             write_strm_file(output_dir, rel_path, url)
-            new_cache[key] = {"url": url, "path": str(abs_path.resolve()), "allowed": 1}
-            written_count += 1
             logging.info("STRM written: %s", abs_path)
+            return {
+                "action": "written",
+                "key": key,
+                "cache_entry": {"url": url, "path": str(abs_path.resolve()), "allowed": 1},
+            }
         except Exception as ex:
             logging.error(
                 "Error processing entry %r (category=%s, year=%s): %s",
@@ -255,9 +259,20 @@ def run_pipeline():
                 ex,
                 exc_info=True,
             )
+            return None
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=cfg.max_workers) as executor:
-        list(executor.map(process_entry, allowed))
+        futures = {executor.submit(process_entry, e): e for e in allowed}
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result is None:
+                continue
+            action = result["action"]
+            new_cache[result["key"]] = result["cache_entry"]
+            if action in ("skipped_existing", "skipped_cached"):
+                skipped_count += 1
+            elif action == "written":
+                written_count += 1
     for e in excluded:
         if e.category in (Category.MOVIE, Category.DOCUMENTARY):
             key = canonical_movie_key(e.raw_title)
