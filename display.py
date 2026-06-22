@@ -322,9 +322,35 @@ def step_header(step: int, title: str) -> None:
 # ---------------------------------------------------------------------------
 
 def setup_file_log(log_path: Path, level: int) -> logging.Handler:
-    """Create a file log handler (unchanged from original)."""
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    handler = logging.FileHandler(str(log_path), mode="a", encoding="utf-8")
+    """Create a file log handler.
+
+    Raises an OSError with a descriptive message if the log directory
+    cannot be created or the log file is not writable (e.g. permission
+    denied on a bind-mounted host directory).
+    """
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OSError(
+            f"Cannot create log directory {log_path.parent}: {exc}\n"
+            f"Check that the parent directory is writable by uid={os.getuid()}"
+        ) from exc
+
+    if not os.access(str(log_path.parent), os.W_OK):
+        raise PermissionError(
+            f"Log directory {log_path.parent} is not writable "
+            f"by uid={os.getuid()}.  "
+            "Verify the host directory permissions and the container user."
+        )
+
+    try:
+        handler = logging.FileHandler(str(log_path), mode="a", encoding="utf-8")
+    except OSError as exc:
+        raise OSError(
+            f"Cannot open log file {log_path}: {exc}\n"
+            f"Ensure the log directory is writable by uid={os.getuid()}"
+        ) from exc
+
     handler.setLevel(level)
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(levelname)s %(message)s")

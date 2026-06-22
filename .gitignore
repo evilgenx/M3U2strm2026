@@ -137,6 +137,7 @@ Thumbs.db
 # Project-specific directories (add as needed)
 # logs/
 # caches/
+output/
 
 movies.m3u
 series.m3u

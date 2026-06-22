@@ -64,9 +64,9 @@ app = Flask(__name__)
 # Paths (overrideable via env)
 # ---------------------------------------------------------------------------
 CONFIG_PATH = Path(os.environ.get("CONFIG_FILE", _PROJECT_ROOT / "config.json"))
-DATA_DIR = Path(os.environ.get("DATA_DIR", _PROJECT_ROOT / "data"))
-LOG_PATH = Path(os.environ.get("LOG_FILE", DATA_DIR / "m3u2strm.log"))
-CACHE_PATH = Path(os.environ.get("CACHE_FILE", DATA_DIR / "caches.db"))
+OUTPUT_DIR = _PROJECT_ROOT / "output"
+LOG_PATH = OUTPUT_DIR / "logs" / "M3U2Strm.log"
+CACHE_PATH = OUTPUT_DIR / "caches.db"
 
 # ---------------------------------------------------------------------------
 # Pipeline run state (in-memory)
@@ -112,7 +112,7 @@ def _run_pipeline_background(dry_run: bool = False) -> None:
             sys.stderr = captured
 
             # -----------------------------------------------------------------
-            # Pre-create all directories that the pipeline will need.
+            # Pre-create all output directories.
             # If config.json is missing, copy from the example template.
             # -----------------------------------------------------------------
             if not CONFIG_PATH.exists():
@@ -130,15 +130,19 @@ def _run_pipeline_background(dry_run: bool = False) -> None:
                         CONFIG_PATH,
                     )
 
-            try:
-                cfg = load_config(CONFIG_PATH)
-                cfg.log_file.parent.mkdir(parents=True, exist_ok=True)
-                cfg.sqlite_cache_file.parent.mkdir(parents=True, exist_ok=True)
-                cfg.output_dir.mkdir(parents=True, exist_ok=True)
-            except Exception as exc:
-                app.logger.warning(
-                    "Could not pre-create directories from config: %s", exc
+            # All output lives under OUTPUT_DIR — create it and its children
+            for subdir in ("logs", "strm"):
+                (OUTPUT_DIR / subdir).mkdir(parents=True, exist_ok=True)
+
+            # Verify the log directory is writable before launching
+            log_dir = OUTPUT_DIR / "logs"
+            if not os.access(str(log_dir), os.W_OK):
+                msg = (
+                    f"Log directory {log_dir} is not writable "
+                    f"(uid={os.getuid()}).  Pipeline aborted."
                 )
+                app.logger.error(msg)
+                raise RuntimeError(msg)
 
             start = time.monotonic()
 
@@ -198,10 +202,10 @@ def _build_summary_from_config() -> dict:
     except Exception:
         return summary
 
-    output_dir = cfg.output_dir
-    if output_dir.exists():
+    strm_dir = cfg.strm_output_dir
+    if strm_dir.exists():
         for cat, cat_label in [("movies", "Movies"), ("tv", "TV Shows"), ("docs", "Documentaries")]:
-            cat_path = output_dir / cat_label
+            cat_path = strm_dir / cat_label
             if cat_path.is_dir():
                 count = sum(1 for _ in cat_path.rglob("*.strm"))
                 summary[cat]["written"] = count
@@ -386,10 +390,6 @@ def _parse_config_form(form: dict) -> dict:
     else:
         data["m3u"] = m3u_lines
 
-    data["output_dir"] = form.get("output_dir", "").strip()
-    data["sqlite_cache_file"] = form.get("sqlite_cache_file", "").strip()
-    data["log_file"] = form.get("log_file", "").strip()
-
     existing_dirs_raw = form.get("existing_media_dirs", "")
     data["existing_media_dirs"] = [
         d.strip() for d in existing_dirs_raw.splitlines() if d.strip()
@@ -472,10 +472,10 @@ def browse() -> str:
         except Exception as e:
             error = f"Config error: {e}"
 
-    if cfg and cfg.output_dir.exists():
-        tree_data = _build_tree(cfg.output_dir)
+    if cfg and cfg.strm_output_dir.exists():
+        tree_data = _build_tree(cfg.strm_output_dir)
     elif cfg:
-        error = f"Output directory does not exist: {cfg.output_dir}"
+        error = f"STRM output directory does not exist: {cfg.strm_output_dir}"
 
     return render_template(
         "browse.html",

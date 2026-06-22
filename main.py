@@ -92,7 +92,8 @@ def run_pipeline():
     # Aliases
     # ------------------------------------------------------------------
     m3u_sources = cfg.m3u
-    output_dir = cfg.output_dir
+    output_dir = cfg.output_dir          # root output/ dir (logs, cache, excluded report)
+    strm_dir = cfg.strm_output_dir       # output/strm/ (Movies, TV Shows, Documentaries)
     db_path = cfg.sqlite_cache_file
     ignore_keywords = cfg.ignore_keywords or {}
     write_non_us_report = cfg.write_non_us_report
@@ -221,7 +222,7 @@ def run_pipeline():
     allowed.extend(reused_allowed)
     excluded.extend(reused_excluded)
 
-    write_excluded_report(output_dir / "excluded_entries.txt", excluded, len(allowed), write_non_us_report)
+    write_excluded_report(strm_dir / "excluded_entries.txt", excluded, len(allowed), write_non_us_report)
 
     # ------------------------------------------------------------------
     # Step 6: Write STRM files with progress bar
@@ -262,7 +263,7 @@ def run_pipeline():
             if e.category == Category.MOVIE:
                 key = canonical_movie_key(e.raw_title)
                 logging.debug(f"Key built for {e.raw_title} (MOVIE): {key}")
-                rel_path = movie_strm_path(output_dir, e)
+                rel_path = movie_strm_path(strm_dir, e)
                 cat = "movies"
             elif e.category == Category.TVSHOW:
                 base = re.sub(r"[sS]\d{1,2}\s*[eE]\d{1,2}.*", "", e.raw_title).strip()
@@ -272,7 +273,7 @@ def run_pipeline():
                     key = canonical_tv_key(base, season, episode)
                     logging.debug(f"Key built for {e.raw_title} (TVSHOW S{season:02d}E{episode:02d}): {key}")
                     rel_path = tv_strm_path(
-                        output_dir,
+                        strm_dir,
                         VODEntry(
                             raw_title=base,
                             safe_title=sanitize_title(base),
@@ -286,12 +287,12 @@ def run_pipeline():
                 else:
                     key = make_cache_key(e.raw_title)
                     logging.debug(f"Key built for {e.raw_title} (TVSHOW no S/E): {key}")
-                    rel_path = tv_strm_path(output_dir, e, 1, 1)
+                    rel_path = tv_strm_path(strm_dir, e, 1, 1)
                 cat = "tv"
             elif e.category == Category.DOCUMENTARY:
                 key = canonical_movie_key(e.raw_title)
                 logging.debug(f"Key built for {e.raw_title} (DOC): {key}")
-                rel_path = doc_strm_path(output_dir, e)
+                rel_path = doc_strm_path(strm_dir, e)
                 cat = "docs"
             else:
                 logging.warning("Unknown category %s for entry %r", e.category, e.raw_title)
@@ -330,7 +331,7 @@ def run_pipeline():
                     }
 
             if not cfg.dry_run:
-                write_strm_file(output_dir, rel_path, url)
+                write_strm_file(strm_dir, rel_path, url)
                 logging.info("STRM written: %s", abs_path)
             else:
                 logging.info("DRY RUN — would write: %s", abs_path)
@@ -416,7 +417,7 @@ def run_pipeline():
     # ------------------------------------------------------------------
     display.rule("Cleaning orphan STRMs")
     logging.info("Cleaning up orphan STRMs...")
-    cleanup_strm_tree(output_dir, new_cache)
+    cleanup_strm_tree(strm_dir, new_cache)
 
     # ------------------------------------------------------------------
     # Step 10: Final summary
@@ -440,7 +441,7 @@ def run_pipeline():
     )
 
     # Show output tree
-    display.render_strm_tree(output_dir)
+    display.render_strm_tree(strm_dir)
 
     logging.info(
         f"VOD/Strm process complete: {written_count} STRMs written, "

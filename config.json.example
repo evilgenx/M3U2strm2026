@@ -1,8 +1,5 @@
 {
   "m3u": "/path to/VOD.m3u",
-  "sqlite_cache_file": "/path to/caches.db",
-  "log_file": "/path to/logs/M3U2Strm.log",
-  "output_dir": "/media/m3u2strm",
   "existing_media_dirs": [
     "/media/Existing"
   ],
@@ -11,7 +8,7 @@
   "write_non_us_report": true,
   "notes": {
     "m3u": "Single string (file path or URL) or a list [\"movies.m3u\", \"series.m3u\"] to merge multiple playlists.",
-    "sqlite_cache_file": "This file will be auto-created on first run.",
+    "output": "All output (logs, cache, STRM files) is written to the 'output/' directory at the project root.",
     "write_non_us_report": "If true, titles excluded by ignore_keywords will be written to excluded_entries.txt for review."
   },
   "tv_group_keywords": [
