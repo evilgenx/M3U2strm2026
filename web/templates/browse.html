@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %} — Browse{% endblock %}
+{% block content %}
+
+<h2>STRM File Browser</h2>
+
+{% if error %}
+<div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+{% if not config %}
+<div class="alert alert-warning">
+    No configuration loaded. Set up <code>config.json</code> on the <a href="/config">Config page</a>.
+</div>
+{% elif tree_data %}
+
+{% for cat_label, cat_data in tree_data.items() %}
+<div class="card">
+    <h3>
+        {{ cat_label }}
+        <span class="badge badge-ok">{{ cat_data.total_strm }} STRM file(s)</span>
+    </h3>
+
+    {% if cat_data.items %}
+    <table class="browse-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th class="num">STRM Files</th>
+                <th>Files</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in cat_data.items %}
+            <tr>
+                <td class="dir-name">{{ item.name }}</td>
+                <td class="num">{{ item.strm_count }}</td>
+                <td>
+                    <details>
+                        <summary>Show files</summary>
+                        <ul class="strm-list">
+                            {% for f in item.strm_files %}
+                            <li>{{ f }}</li>
+                            {% endfor %}
+                            {% if item.strm_count > 20 %}
+                            <li class="dim">… and {{ item.strm_count - 20 }} more</li>
+                            {% endif %}
+                        </ul>
+                    </details>
+                </td>
+            </tr>
+            {% for sub in item.subdirs %}
+            <tr>
+                <td class="sub-dir-name">&emsp;&#x2514;&#x2500; {{ sub.name }}</td>
+                <td class="num">{{ sub.strm_count }}</td>
+                <td>
+                    <details>
+                        <summary>Show files</summary>
+                        <ul class="strm-list">
+                            {% for f in sub.strm_files %}
+                            <li>{{ f }}</li>
+                            {% endfor %}
+                            {% if sub.strm_count > 20 %}
+                            <li class="dim">… and {{ sub.strm_count - 20 }} more</li>
+                            {% endif %}
+                        </ul>
+                    </details>
+                </td>
+            </tr>
+            {% endfor %}
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="dim">No items in this category yet.</p>
+    {% endif %}
+</div>
+{% endfor %}
+
+{% else %}
+<div class="alert alert-warning">
+    No STRM files found. Run the pipeline to generate output, or check your output directory configuration.
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %} — Log Viewer{% endblock %}
+
+{% block head %}
+{% if auto_refresh %}
+<meta http-equiv="refresh" content="5" />
+{% endif %}
+{% endblock %}
+
+{% block content %}
+
+<h2>Log Viewer</h2>
+
+<div class="card">
+    <div class="log-header">
+        <span>File: <code>{{ log_path }}</code> — {{ total_lines }} lines (showing last {{ lines|length }})</span>
+        <div class="log-controls">
+            {% if auto_refresh %}
+            <a href="/logs?auto_refresh=0" class="btn btn-small">Auto-refresh: ON</a>
+            {% else %}
+            <a href="/logs?auto_refresh=1" class="btn btn-small btn-dim">Auto-refresh: OFF</a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="log-container">
+        {% if lines %}
+        <pre class="log-output">{% for line in lines %}<span class="log-line">{{ line }}</span>
+{% endfor %}</pre>
+        {% else %}
+        <div class="alert alert-warning">No log entries yet. Run the pipeline to generate output.</div>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}

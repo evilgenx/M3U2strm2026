@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>M3U2strm2026{% block title %}{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="/" class="nav-brand">M3U2strm<span class="brand-year">2026</span></a>
+            <ul class="nav-links">
+                <li><a href="/" class="nav-link">Dashboard</a></li>
+                <li><a href="/config" class="nav-link">Config</a></li>
+                <li><a href="/browse" class="nav-link">Browse</a></li>
+                <li><a href="/logs" class="nav-link">Logs</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main class="main-container">
+        {% with messages = get_flashed_messages(with_categories=True) %}
+        {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <span>M3U2strm2026 &mdash; IPTV VOD to STRM Sync</span>
+        <span class="footer-status" id="footer-status">● idle</span>
+    </footer>
+
+    <script>
+        // Poll pipeline status and update footer indicator
+        async function pollStatus() {
+            try {
+                const resp = await fetch('/api/status');
+                const data = await resp.json();
+                const el = document.getElementById('footer-status');
+                if (!el) return;
+                if (data.running) {
+                    el.textContent = '● running';
+                    el.className = 'footer-status status-running';
+                } else if (data.error) {
+                    el.textContent = '● error';
+                    el.className = 'footer-status status-error';
+                } else {
+                    el.textContent = '● idle';
+                    el.className = 'footer-status status-idle';
+                }
+            } catch(e) {
+                // ignore fetch errors
+            }
+        }
+        setInterval(pollStatus, 5000);
+        pollStatus();
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

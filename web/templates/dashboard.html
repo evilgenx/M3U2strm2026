@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %} — Dashboard{% endblock %}
+{% block content %}
+
+<h2>Dashboard</h2>
+
+{% if config_error %}
+<div class="alert alert-error">
+    <strong>Configuration Error:</strong> {{ config_error }}
+</div>
+{% endif %}
+
+{% if not config %}
+<div class="alert alert-warning">
+    No <code>config.json</code> found. <a href="/config">Create one</a> to get started.
+</div>
+{% else %}
+<div class="card">
+    <h3>Configuration Summary</h3>
+    <table class="info-table">
+        <tr><td class="label">M3U Sources</td><td>
+            {% if config.m3u is string %}
+                {{ config.m3u }}
+            {% else %}
+                {% for src in config.m3u %}
+                    {{ src }}<br />
+                {% endfor %}
+            {% endif %}
+        </td></tr>
+        <tr><td class="label">Output Directory</td><td>{{ config.output_dir }}</td></tr>
+        <tr><td class="label">Media Directories</td><td>
+            {% for d in config.existing_media_dirs %}
+                {{ d }}<br />
+            {% endfor %}
+        </td></tr>
+        <tr><td class="label">Max Workers</td><td>{{ config.max_workers }}</td></tr>
+        <tr><td class="label">Dry Run</td><td>
+            <span class="badge {% if config.dry_run %}badge-warning{% else %}badge-ok{% endif %}">
+                {{ 'ON' if config.dry_run else 'OFF' }}
+            </span>
+        </td></tr>
+    </table>
+</div>
+{% endif %}
+
+<!-- Pipeline controls -->
+<div class="card">
+    <h3>Pipeline Control</h3>
+
+    <div class="pipeline-status">
+        {% if state.running %}
+        <div class="alert alert-info">
+            <span class="spinner"></span> Pipeline running — {{ state.current_progress }}
+        </div>
+        {% elif state.error %}
+        <div class="alert alert-error">
+            Last run failed: {{ state.error }}
+        </div>
+        {% else %}
+        <div class="alert alert-ok">Pipeline idle</div>
+        {% endif %}
+
+        {% if state.last_run_start %}
+        <p class="dim">Last run started: {{ state.last_run_start }}</p>
+        {% if state.last_elapsed %}
+        <p class="dim">Duration: {{ state.last_elapsed }}s</p>
+        {% endif %}
+        {% endif %}
+    </div>
+
+    <form id="run-form" class="inline-form">
+        <button type="submit" id="run-btn" class="btn btn-primary" {% if state.running %}disabled{% endif %}>
+            {% if state.running %}Running…{% else %}Run Pipeline Now{% endif %}
+        </button>
+        <label class="checkbox-label">
+            <input type="checkbox" id="dry-run-check" />
+            Dry Run
+        </label>
+    </form>
+    <div id="run-message" class="run-message"></div>
+</div>
+
+<!-- Scheduler -->
+<div class="card">
+    <h3>Scheduler</h3>
+    <p>
+        Status: 
+        <span class="badge {% if schedule_interval > 0 %}badge-ok{% else %}badge-dim{% endif %}">
+            {{ 'Enabled' if schedule_interval > 0 else 'Disabled' }}
+        </span>
+    </p>
+    {% if schedule_interval > 0 %}
+    <p class="dim">Interval: every {{ schedule_interval }} minute(s)</p>
+    {% if next_run %}
+    <p class="dim">Next scheduled run: {{ next_run }}</p>
+    {% endif %}
+    {% endif %}
+    <p class="dim">Configure the interval on the <a href="/config">Config page</a> (<code>schedule_interval_minutes</code>).</p>
+</div>
+
+<!-- Last run summary -->
+{% if state.last_summary %}
+<div class="card">
+    <h3>Last Run Summary</h3>
+    <table class="summary-table">
+        <thead>
+            <tr>
+                <th>Category</th>
+                <th class="num">Written</th>
+                <th class="num">Skipped</th>
+                <th class="num">Excluded</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for cat, label in [('movies','Movies'), ('tv','TV Shows'), ('docs','Documentaries'), ('unknown','Other')] %}
+            {% set s = state.last_summary.get(cat, {}) %}
+            {% if s.written or s.skipped or s.excluded %}
+            <tr>
+                <td>{{ label }}</td>
+                <td class="num">{{ s.written }}</td>
+                <td class="num">{{ s.skipped }}</td>
+                <td class="num">{{ s.excluded }}</td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    {% if state.last_elapsed %}
+    <p class="dim">Completed in {{ state.last_elapsed }}s</p>
+    {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const form = document.getElementById('run-form');
+    const btn = document.getElementById('run-btn');
+    const msgEl = document.getElementById('run-message');
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        btn.disabled = true;
+        btn.textContent = 'Starting…';
+        msgEl.textContent = '';
+        msgEl.className = 'run-message';
+
+        const dryRun = document.getElementById('dry-run-check').checked;
+
+        try {
+            const resp = await fetch('/api/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dry_run: dryRun })
+            });
+            const data = await resp.json();
+            if (resp.ok) {
+                msgEl.textContent = 'Pipeline started. Check logs for progress.';
+                msgEl.className = 'run-message run-ok';
+                // Reload after a delay to show running state
+                setTimeout(() => location.reload(), 2000);
+            } else {
+                msgEl.textContent = data.message || 'Error starting pipeline';
+                msgEl.className = 'run-message run-error';
+                btn.disabled = false;
+                btn.textContent = 'Run Pipeline Now';
+            }
+        } catch(err) {
+            msgEl.textContent = 'Network error: ' + err.message;
+            msgEl.className = 'run-message run-error';
+            btn.disabled = false;
+            btn.textContent = 'Run Pipeline Now';
+        }
+    });
+</script>
+{% endblock %}

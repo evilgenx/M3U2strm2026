@@ -7,7 +7,7 @@ from typing import List, Dict, Optional
 
 @dataclass
 class Config:
-    m3u: str
+    m3u: List[str]
     sqlite_cache_file: Path
     log_file: Path
     output_dir: Path
@@ -31,6 +31,8 @@ def _coerce_bool(val, default=False) -> bool:
 
 
 def load_config(path: Path) -> Config:
+    if not path.exists():
+        raise FileNotFoundError(f"Configuration file not found: {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
     mw = data.get("max_workers")
     if isinstance(mw, str) and mw.lower() == "max":
@@ -41,8 +43,14 @@ def load_config(path: Path) -> Config:
         existing_dirs = [Path(data["existing_media_dir"])]
     else:
         raise KeyError("Config missing 'existing_media_dir' or 'existing_media_dirs'")
+    raw_m3u = data["m3u"]
+    m3u_list: List[str] = (
+        [s.strip() for s in raw_m3u.split(",") if s.strip()]
+        if isinstance(raw_m3u, str)
+        else list(raw_m3u)
+    )
     return Config(
-        m3u=data["m3u"],
+        m3u=m3u_list,
         sqlite_cache_file=Path(data["sqlite_cache_file"]),
         log_file=Path(data["log_file"]),
         output_dir=Path(data["output_dir"]),

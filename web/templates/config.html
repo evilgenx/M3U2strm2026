@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %} — Config Editor{% endblock %}
+{% block content %}
+
+<h2>Configuration Editor</h2>
+
+{% if save_message %}
+<div class="alert alert-ok">{{ save_message }}</div>
+{% endif %}
+{% if save_error %}
+<div class="alert alert-error">{{ save_error }}</div>
+{% endif %}
+
+<form method="POST" class="config-form">
+    <div class="card">
+        <h3>Main Settings</h3>
+
+        <div class="form-group">
+            <label for="m3u">M3U Sources</label>
+            <textarea id="m3u" name="m3u" rows="4" placeholder="One source per line (file path or URL)">{{ config_data.m3u if config_data.m3u is string else '\n'.join(config_data.m3u) if config_data.m3u else '' }}</textarea>
+            <span class="help">File paths or URLs to M3U playlists. One per line.</span>
+        </div>
+
+        <div class="form-group">
+            <label for="output_dir">Output Directory</label>
+            <input type="text" id="output_dir" name="output_dir" value="{{ config_data.get('output_dir', '') }}" placeholder="/media/m3u2strm" />
+        </div>
+
+        <div class="form-group">
+            <label for="sqlite_cache_file">SQLite Cache File</label>
+            <input type="text" id="sqlite_cache_file" name="sqlite_cache_file" value="{{ config_data.get('sqlite_cache_file', '') }}" placeholder="/app/data/caches.db" />
+        </div>
+
+        <div class="form-group">
+            <label for="log_file">Log File</label>
+            <input type="text" id="log_file" name="log_file" value="{{ config_data.get('log_file', '') }}" placeholder="/app/data/m3u2strm.log" />
+        </div>
+
+        <div class="form-group">
+            <label for="existing_media_dirs">Existing Media Directories</label>
+            <textarea id="existing_media_dirs" name="existing_media_dirs" rows="3" placeholder="One directory per line">{{ '\n'.join(config_data.get('existing_media_dirs', [])) }}</textarea>
+            <span class="help">Directories to scan for existing media files (movies, TV shows, documentaries).</span>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group form-group-inline">
+                <label for="max_workers">Max Workers</label>
+                <input type="text" id="max_workers" name="max_workers" value="{{ config_data.get('max_workers', '8') }}" style="width: 80px;" />
+                <span class="help">Number of threads. Use "max" for all CPUs.</span>
+            </div>
+            <div class="form-group form-group-inline">
+                <label for="schedule_interval_minutes">Schedule Interval (minutes)</label>
+                <input type="text" id="schedule_interval_minutes" name="schedule_interval_minutes" value="{{ config_data.get('schedule_interval_minutes', '0') }}" style="width: 80px;" />
+                <span class="help">0 = disabled. e.g. 360 = every 6 hours.</span>
+            </div>
+        </div>
+
+        <div class="form-checkboxes">
+            <label class="checkbox-label">
+                <input type="checkbox" name="dry_run" value="1" {% if config_data.get('dry_run') %}checked{% endif %} />
+                Dry Run (test mode — no files written)
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" name="write_non_us_report" value="1" {% if config_data.get('write_non_us_report', True) %}checked{% endif %} />
+                Write excluded entries report
+            </label>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Category Keywords</h3>
+        <p class="dim">Keywords used to classify entries into categories based on group-title.</p>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="tv_group_keywords">TV Group Keywords</label>
+                <textarea id="tv_group_keywords" name="tv_group_keywords" rows="6" placeholder="One keyword per line">{{ '\n'.join(config_data.get('tv_group_keywords', [])) }}</textarea>
+            </div>
+            <div class="form-group">
+                <label for="movie_group_keywords">Movie Group Keywords</label>
+                <textarea id="movie_group_keywords" name="movie_group_keywords" rows="6" placeholder="One keyword per line">{{ '\n'.join(config_data.get('movie_group_keywords', [])) }}</textarea>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="doc_group_keywords">Documentary Group Keywords</label>
+                <textarea id="doc_group_keywords" name="doc_group_keywords" rows="4" placeholder="One keyword per line">{{ '\n'.join(config_data.get('doc_group_keywords', [])) }}</textarea>
+            </div>
+            <div class="form-group">
+                <label for="replay_group_keywords">Replay Group Keywords</label>
+                <textarea id="replay_group_keywords" name="replay_group_keywords" rows="4" placeholder="One keyword per line">{{ '\n'.join(config_data.get('replay_group_keywords', [])) }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Ignore Keywords</h3>
+        <p class="dim">Entries matching these keywords (case-insensitive) will be excluded.</p>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="ignore_tvshows">Ignore — TV Shows</label>
+                <textarea id="ignore_tvshows" name="ignore_tvshows" rows="5" placeholder="One keyword per line">{{ '\n'.join(config_data.get('ignore_keywords', {}).get('tvshows', [])) }}</textarea>
+            </div>
+            <div class="form-group">
+                <label for="ignore_movies">Ignore — Movies</label>
+                <textarea id="ignore_movies" name="ignore_movies" rows="5" placeholder="One keyword per line">{{ '\n'.join(config_data.get('ignore_keywords', {}).get('movies', [])) }}</textarea>
+            </div>
+            <div class="form-group">
+                <label for="ignore_documentaries">Ignore — Documentaries</label>
+                <textarea id="ignore_documentaries" name="ignore_documentaries" rows="5" placeholder="One keyword per line">{{ '\n'.join(config_data.get('ignore_keywords', {}).get('documentaries', [])) }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-block">Save Configuration</button>
+</form>
+
+{% if config_pretty %}
+<div class="card">
+    <h3>Raw JSON</h3>
+    <pre class="json-preview">{{ config_pretty }}</pre>
+</div>
+{% endif %}
+
+{% endblock %}

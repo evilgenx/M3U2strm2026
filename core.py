@@ -57,7 +57,8 @@ def _normalize_unicode(text: str) -> str:
 def sanitize_title(title: str) -> str:
     original = title
     t = _normalize_unicode(title.strip())
-    t = _ascii(t)
+    # Keep Unicode characters intact — strip only bytes that are illegal in filenames
+    t = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", t)
     t = re.sub(r"^\s*(\d+[kK]|[0-9]{3,4}[pP]):\s*", "", t)
     t = t.replace("&", "and")
     t = re.sub(r"[{}()]?tt\d+[{}()]?", "", t, flags=re.IGNORECASE)
@@ -73,8 +74,8 @@ def sanitize_title(title: str) -> str:
     return t.strip()
 
 
-def make_cache_key(title: str, category: str = None) -> str:
-    key = re.sub(r"[^a-z0-9]+", "", title.lower())
+def make_cache_key(title: str, category: Optional[str] = None) -> str:
+    key = re.sub(r"[^\w]+", "", title.lower(), flags=re.UNICODE)
     if category:
         return f"{category}:{key}"
     return key
@@ -113,6 +114,8 @@ from typing import Any, Dict, Optional, Tuple
 
 class SQLiteCache:
     def __init__(self, db_path: Path):
+        # Ensure the parent directory exists before creating the database
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         # Use check_same_thread=False to allow connection sharing across threads
         self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._lock = threading.RLock()
@@ -286,6 +289,9 @@ def build_existing_media_cache(root: Path) -> Dict[str, str]:
         root = root.resolve()
     except Exception as e:
         logging.error(f"Failed to resolve directory {root}: {e}")
+        return existing
+    if not root.exists():
+        logging.warning("Media directory not found, skipping: %s", root)
         return existing
     tv_dirs = ["tv shows", "tv_shows", "series", "tv", "television"]
     movie_dirs = ["movies", "films", "film", "movie"]

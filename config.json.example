@@ -10,6 +10,7 @@
   "max_workers": 8,
   "write_non_us_report": true,
   "notes": {
+    "m3u": "Single string (file path or URL) or a list [\"movies.m3u\", \"series.m3u\"] to merge multiple playlists.",
     "sqlite_cache_file": "This file will be auto-created on first run.",
     "write_non_us_report": "If true, titles excluded by ignore_keywords will be written to excluded_entries.txt for review."
   },

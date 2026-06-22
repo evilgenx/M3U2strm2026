@@ -1,0 +1,25 @@
+services:
+  m3u2strm:
+    build: .
+    container_name: m3u2strm2026
+    network_mode: host
+    ports:
+      - "${PORT:-8585}:${PORT:-8585}"
+    environment:
+      - PORT=${PORT:-8585}
+      - M3U2STRM_PLAIN=1
+      - SCHEDULE_INTERVAL_MINUTES=${SCHEDULE_INTERVAL_MINUTES:-0}
+    volumes:
+      - ./config.json:/app/config.json
+      # Mount the entire m3u2strm working directory at the same host path
+      # so config.json paths like /home/malexander/m3u2strm/... work inside the container
+      - /home/malexander/m3u2strm:/home/malexander/m3u2strm
+      # Mount existing media directories (read-only recommended)
+      - /media/Existing:/media/Existing:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8585}/api/status')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
