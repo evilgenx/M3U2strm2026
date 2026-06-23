@@ -16,6 +16,7 @@ services:
       - SCHEDULE_INTERVAL_MINUTES=${SCHEDULE_INTERVAL_MINUTES:-0}
     volumes:
       - ./config.json:/app/config.json
+      - ./output:/app/output
       # Mount existing media directories (read-only recommended)
       - /media/Existing:/media/Existing:ro
     restart: unless-stopped
