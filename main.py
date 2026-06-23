@@ -331,6 +331,14 @@ def run_pipeline():
     display.info(f"Cache hits: {len(reused_allowed)} allowed + {len(reused_excluded)} excluded")
     display.info(f"Entries to process: {len(to_check)}")
 
+    # Build a set of matched keys using _entry_key() for consistent comparison
+    # in process_entry() (avoids key-mismatch between the two code paths)
+    matched_keys: set[str] = set()
+    for e in matched_movies:
+        matched_keys.add(_entry_key(e))
+    for e in matched_tv:
+        matched_keys.add(_entry_key(e))
+
     # ------------------------------------------------------------------
     # Step 4b: Write comparison reports (separate movies & TV)
     # ------------------------------------------------------------------
@@ -450,9 +458,9 @@ def run_pipeline():
             abs_path = rel_path
             url = e.url
 
-            # Determine if this entry is already on disk
-            existing_set = existing_tv_keys if e.category == Category.TVSHOW else existing_movie_keys
-            on_disk = key in existing_set
+            # Use matched_keys (built from _entry_key() during comparison phase)
+            # for consistent on-disk detection
+            on_disk = key in matched_keys
 
             # In "diff" mode, skip entries already on disk (if URL/path unchanged).
             # In "all" mode or for unmatched entries, always write the STRM.
