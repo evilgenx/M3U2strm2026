@@ -144,3 +144,5 @@ series.m3u
 
 config.json
 myconfig.json
+
+docker-compose.yml

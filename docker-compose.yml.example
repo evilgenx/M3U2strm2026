@@ -1,0 +1,29 @@
+services:
+  m3u2strm:
+    build:
+      context: .
+      args:
+        PUID: ${PUID:-1000}
+        PGID: ${PGID:-1000}
+    container_name: m3u2strm2026
+    user: "${PUID:-1000}:${PGID:-1000}"
+    network_mode: host
+    ports:
+      - "${PORT:-8585}:${PORT:-8585}"
+    environment:
+      - PORT=${PORT:-8585}
+      - M3U2STRM_PLAIN=1
+      - SCHEDULE_INTERVAL_MINUTES=${SCHEDULE_INTERVAL_MINUTES:-0}
+    volumes:
+      - ./config.json:/app/config.json
+      - ./output:/app/output
+      # Mount existing media directories (read-only recommended)
+      # - /path/to/your/movies:/media/Movies:ro
+      # - /path/to/your/tv:/media/TV Shows:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8585}/api/status')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
