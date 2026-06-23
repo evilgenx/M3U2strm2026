@@ -563,6 +563,16 @@ def api_status() -> Response:
             if job and job.next_run_time:
                 next_run = job.next_run_time.isoformat()
 
+        # Gather cache stats when not running (avoid contention)
+        cache_stats = None
+        if not _pipeline_state["running"] and CACHE_PATH.exists():
+            try:
+                cache = SQLiteCache(CACHE_PATH)
+                cache_stats = cache.stats()
+                cache.close()
+            except Exception:
+                pass
+
         return jsonify({
             "running": _pipeline_state["running"],
             "last_run_start": _pipeline_state["last_run_start"],
@@ -576,7 +586,101 @@ def api_status() -> Response:
                 "next_run": next_run,
                 "enabled": sched_interval > 0,
             },
+            "cache": cache_stats,
         })
+
+
+# ---------------------------------------------------------------------------
+# Cache management API
+# ---------------------------------------------------------------------------
+
+@app.route("/api/cache/stats")
+def api_cache_stats() -> Response:
+    """Return detailed database and cache statistics."""
+    if not CACHE_PATH.exists():
+        return jsonify({"error": "Cache database does not exist yet"}), 404
+
+    try:
+        cache = SQLiteCache(CACHE_PATH)
+        stats = cache.stats()
+        cache.close()
+        return jsonify(stats)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cache/maintenance", methods=["POST"])
+def api_cache_maintenance() -> Response:
+    """Run database maintenance (WAL checkpoint, integrity check, optimize)."""
+    if not CACHE_PATH.exists():
+        return jsonify({"error": "Cache database does not exist yet"}), 404
+
+    with _pipeline_lock:
+        if _pipeline_state["running"]:
+            return jsonify({"error": "Cannot run maintenance while pipeline is running"}), 409
+
+    try:
+        cache = SQLiteCache(CACHE_PATH)
+        result = cache.maintenance()
+        cache.close()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cache/backup", methods=["POST"])
+def api_cache_backup() -> Response:
+    """Trigger an on-demand cache backup."""
+    if not CACHE_PATH.exists():
+        return jsonify({"error": "Cache database does not exist yet"}), 404
+
+    backup_path = OUTPUT_DIR / "caches.db.bak"
+
+    try:
+        cache = SQLiteCache(CACHE_PATH)
+        dest = cache.backup(backup_path)
+        stats = cache.stats()
+        cache.close()
+        return jsonify({
+            "status": "ok",
+            "backup_path": str(dest),
+            "backup_size_bytes": dest.stat().st_size if dest.exists() else 0,
+            "db_size_bytes": stats["db_size_bytes"],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cache/restore", methods=["POST"])
+def api_cache_restore() -> Response:
+    """Restore the cache database from the latest backup.
+    Returns an error if the pipeline is currently running.
+    """
+    with _pipeline_lock:
+        if _pipeline_state["running"]:
+            return jsonify({"error": "Cannot restore while pipeline is running"}), 409
+
+    backup_path = OUTPUT_DIR / "caches.db.bak"
+    if not backup_path.exists():
+        return jsonify({"error": f"No backup found at {backup_path}"}), 404
+
+    try:
+        cache = SQLiteCache(CACHE_PATH)
+        success = cache.restore_from_backup(backup_path)
+        if success:
+            stats = cache.stats()
+            cache.close()
+            return jsonify({
+                "status": "ok",
+                "message": "Database restored from backup",
+                "db_size_bytes": stats["db_size_bytes"],
+                "row_counts": stats["row_counts"],
+            })
+        else:
+            cache.close()
+            return jsonify({"error": "Restore failed — check logs for details"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ---------------------------------------------------------------------------

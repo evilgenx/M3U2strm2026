@@ -103,6 +103,20 @@
     <p class="dim">Configure the interval on the <a href="/config">Config page</a> (<code>schedule_interval_minutes</code>).</p>
 </div>
 
+<!-- Cache Status -->
+<div class="card" id="cache-card">
+    <h3>Cache Status</h3>
+    <div id="cache-content">
+        <p class="dim">Loading cache statistics…</p>
+    </div>
+    <div class="cache-actions" style="margin-top: 1rem;">
+        <button onclick="cacheAction('maintenance')" class="btn btn-sm" id="btn-maint">Maintenance</button>
+        <button onclick="cacheAction('backup')" class="btn btn-sm" id="btn-backup">Backup Now</button>
+        <button onclick="cacheAction('restore')" class="btn btn-sm btn-warning" id="btn-restore">Restore Backup</button>
+    </div>
+    <div id="cache-msg" class="run-message" style="margin-top: 0.5rem;"></div>
+</div>
+
 <!-- Last run summary -->
 {% if state.last_summary %}
 <div class="card">
@@ -178,5 +192,89 @@
             btn.textContent = 'Run Pipeline Now';
         }
     });
+
+    // --- Cache status & actions ---
+
+    function formatBytes(bytes) {
+        if (bytes === null || bytes === undefined) return 'n/a';
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1048576).toFixed(2) + ' MB';
+    }
+
+    async function loadCacheStats() {
+        const el = document.getElementById('cache-content');
+        try {
+            const resp = await fetch('/api/cache/stats');
+            if (!resp.ok) {
+                el.innerHTML = '<p class="dim">Cache database not available yet — it will be created on the first pipeline run.</p>';
+                return;
+            }
+            const s = await resp.json();
+            el.innerHTML = [
+                '<table class="info-table">',
+                '<tr><td class="label">Database size</td><td>' + formatBytes(s.db_size_bytes) + '</td></tr>',
+                '<tr><td class="label">WAL size</td><td>' + formatBytes(s.wal_size_bytes) + '</td></tr>',
+                '<tr><td class="label">existing_media rows</td><td>' + (s.row_counts.existing_media || 0) + '</td></tr>',
+                '<tr><td class="label">strm_cache rows</td><td>' + (s.row_counts.strm_cache || 0) + '</td></tr>',
+                '<tr><td class="label">Allowed entries</td><td>' + (s.strm_cache_allowed || 0) + '</td></tr>',
+                '<tr><td class="label">Excluded entries</td><td>' + (s.strm_cache_excluded || 0) + '</td></tr>',
+                '<tr><td class="label">Entries with path</td><td>' + (s.strm_cache_with_path || 0) + '</td></tr>',
+                '<tr><td class="label">In-memory cache size</td><td>' + (s.mem_cache_size || 0) + ' keys</td></tr>',
+                '</table>'
+            ].join('\n');
+        } catch(err) {
+            el.innerHTML = '<p class="dim">Error loading cache stats: ' + err.message + '</p>';
+        }
+    }
+
+    async function cacheAction(action) {
+        const msgEl = document.getElementById('cache-msg');
+        const confirmMsg = {
+            'restore': 'This will replace the current cache database with the latest backup. Are you sure?'
+        };
+        if (confirmMsg[action] && !confirm(confirmMsg[action])) return;
+
+        const buttons = {
+            maintenance: document.getElementById('btn-maint'),
+            backup: document.getElementById('btn-backup'),
+            restore: document.getElementById('btn-restore')
+        };
+        const btn = buttons[action];
+        if (btn) { btn.disabled = true; btn.textContent = '…'; }
+
+        msgEl.textContent = '';
+        msgEl.className = 'run-message';
+
+        try {
+            const resp = await fetch('/api/cache/' + action, { method: 'POST' });
+            const data = await resp.json();
+            if (resp.ok) {
+                if (action === 'maintenance') {
+                    msgEl.textContent = 'Maintenance complete — integrity: ' + (data.integrity || 'ok');
+                } else if (action === 'backup') {
+                    msgEl.textContent = 'Backup complete — ' + formatBytes(data.backup_size_bytes);
+                } else if (action === 'restore') {
+                    msgEl.textContent = 'Restored — ' + (data.row_counts ? JSON.stringify(data.row_counts) : 'ok');
+                }
+                msgEl.className = 'run-message run-ok';
+                loadCacheStats();
+            } else {
+                msgEl.textContent = data.error || 'Action failed';
+                msgEl.className = 'run-message run-error';
+            }
+        } catch(err) {
+            msgEl.textContent = 'Network error: ' + err.message;
+            msgEl.className = 'run-message run-error';
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = action.charAt(0).toUpperCase() + action.slice(1); }
+            if (action === 'maintenance') document.getElementById('btn-maint').textContent = 'Maintenance';
+            if (action === 'backup') document.getElementById('btn-backup').textContent = 'Backup Now';
+            if (action === 'restore') document.getElementById('btn-restore').textContent = 'Restore Backup';
+        }
+    }
+
+    // Load cache stats on page load
+    loadCacheStats();
 </script>
 {% endblock %}

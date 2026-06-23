@@ -254,6 +254,38 @@ def render_summary_table(
 # Tree view of output directory
 # ---------------------------------------------------------------------------
 
+def render_comparison_summary(
+    *,
+    movies_matched: int = 0,
+    movies_unmatched: int = 0,
+    tv_matched: int = 0,
+    tv_unmatched: int = 0,
+    export_mode: str = "diff",
+) -> None:
+    """Print a comparison summary table showing M3U vs. existing media."""
+    total_matched = movies_matched + tv_matched
+    total_unmatched = movies_unmatched + tv_unmatched
+    total = total_matched + total_unmatched
+
+    table = Table(
+        title="Comparison: M3U vs. Media Directories",
+        title_style="bold",
+        border_style="bright_cyan",
+        show_footer=True,
+    )
+    table.add_column("Category", style="bold", footer="Total")
+    table.add_column("Matched (on disk)", justify="right", style="yellow", footer=str(total_matched))
+    table.add_column("Unmatched (new)", justify="right", style="green", footer=str(total_unmatched))
+    table.add_column("Total", justify="right", style="bold", footer=str(total))
+
+    table.add_row("Movies", str(movies_matched), str(movies_unmatched), str(movies_matched + movies_unmatched))
+    table.add_row("TV Shows", str(tv_matched), str(tv_unmatched), str(tv_matched + tv_unmatched))
+
+    console.print()
+    console.print(table)
+    console.print(_dim(f"Export mode: {export_mode}"))
+
+
 def render_strm_tree(output_dir: Path, max_items_per_category: int = 6) -> None:
     """Print a tree view of the STRM output directory."""
     if not output_dir.exists():

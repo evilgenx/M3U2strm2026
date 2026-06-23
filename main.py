@@ -61,6 +61,84 @@ def write_excluded_report(path: Path, excluded, allowed_count: int, enabled: boo
     display.info(f"Excluded report written: {path}")
 
 
+def write_comparison_report_movies(
+    path: Path,
+    matched: list[VODEntry],
+    unmatched: list[VODEntry],
+    export_mode: str,
+):
+    """Write a comparison report for Movies and Documentaries."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        f.write("=== Movies & Documentaries — Comparison Report ===\n\n")
+        f.write(f"Export mode: {export_mode}\n")
+        f.write(f"Total M3U entries: {len(matched) + len(unmatched)}\n")
+        f.write(f"Matched (already on disk): {len(matched)}\n")
+        f.write(f"Unmatched (new / will be written): {len(unmatched)}\n\n")
+
+        f.write("--- Matched (already on disk) ---\n")
+        for e in sorted(matched, key=lambda x: x.raw_title.lower()):
+            cat_label = "DOC" if e.category == Category.DOCUMENTARY else "MOVIE"
+            f.write(f"  [{cat_label}] {e.raw_title}\n")
+        f.write(f"\nTotal matched: {len(matched)}\n\n")
+
+        f.write("--- Unmatched (new) ---\n")
+        for e in sorted(unmatched, key=lambda x: x.raw_title.lower()):
+            cat_label = "DOC" if e.category == Category.DOCUMENTARY else "MOVIE"
+            f.write(f"  [{cat_label}] {e.raw_title}\n")
+        f.write(f"\nTotal unmatched: {len(unmatched)}\n")
+        f.write("=== End of Report ===\n")
+
+    logging.info(f"Movie comparison report written: {path}")
+    display.info(f"Movie comparison report: {len(matched)} matched, {len(unmatched)} unmatched — {path}")
+
+
+def write_comparison_report_tv(
+    path: Path,
+    matched: list[VODEntry],
+    unmatched: list[VODEntry],
+    export_mode: str,
+):
+    """Write a comparison report for TV Shows."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Group TV entries by show + season for readability
+    def _group_tv(entries: list[VODEntry]) -> dict[str, list[VODEntry]]:
+        grouped: dict[str, list[VODEntry]] = defaultdict(list)
+        for e in entries:
+            base = re.sub(r"[sS]\d{1,2}\s*[eE]\d{1,2}.*", "", e.raw_title).strip()
+            grouped[base].append(e)
+        return dict(sorted(grouped.items(), key=lambda x: x[0].lower()))
+
+    matched_groups = _group_tv(matched)
+    unmatched_groups = _group_tv(unmatched)
+
+    with path.open("w", encoding="utf-8") as f:
+        f.write("=== TV Shows — Comparison Report ===\n\n")
+        f.write(f"Export mode: {export_mode}\n")
+        f.write(f"Total M3U TV episodes: {len(matched) + len(unmatched)}\n")
+        f.write(f"Matched (already on disk): {len(matched)}\n")
+        f.write(f"Unmatched (new / will be written): {len(unmatched)}\n\n")
+
+        f.write("--- Matched (already on disk) ---\n")
+        for show, episodes in matched_groups.items():
+            f.write(f"  {show} — {len(episodes)} episode(s)\n")
+            for ep in sorted(episodes, key=lambda x: x.raw_title.lower()):
+                f.write(f"      {ep.raw_title}\n")
+        f.write(f"\nTotal matched episodes: {len(matched)}\n\n")
+
+        f.write("--- Unmatched (new) ---\n")
+        for show, episodes in unmatched_groups.items():
+            f.write(f"  {show} — {len(episodes)} episode(s)\n")
+            for ep in sorted(episodes, key=lambda x: x.raw_title.lower()):
+                f.write(f"      {ep.raw_title}\n")
+        f.write(f"\nTotal unmatched episodes: {len(unmatched)}\n")
+        f.write("=== End of Report ===\n")
+
+    logging.info(f"TV comparison report written: {path}")
+    display.info(f"TV comparison report: {len(matched)} matched, {len(unmatched)} unmatched — {path}")
+
+
 def run_pipeline():
     start_time = time.monotonic()
 
@@ -97,6 +175,9 @@ def run_pipeline():
     db_path = cfg.sqlite_cache_file
     ignore_keywords = cfg.ignore_keywords or {}
     write_non_us_report = cfg.write_non_us_report
+    export_mode = cfg.strm_export_mode   # "diff" or "all"
+
+    display.info(f"STRM export mode: {export_mode}")
 
     # ------------------------------------------------------------------
     # Step 1: Scan media directories (separate for movies + TV)
@@ -193,7 +274,7 @@ def run_pipeline():
     display.info(f"Deduplicated: {len(entries)} unique entries")
 
     # ------------------------------------------------------------------
-    # Step 4: Check cache & existing
+    # Step 4: Check cache & existing — build comparison data
     # ------------------------------------------------------------------
     strm_cache = cache.strm_cache_dict()
     logging.debug("Loaded %d entries from strm_cache", len(strm_cache))
@@ -201,6 +282,12 @@ def run_pipeline():
     to_check: list[VODEntry] = []
     reused_allowed: list[VODEntry] = []
     reused_excluded: list[VODEntry] = []
+
+    # Track comparison: which M3U entries match existing media on disk
+    matched_movies: list[VODEntry] = []   # Movies/Docs found on disk
+    matched_tv: list[VODEntry] = []        # TV shows found on disk
+    unmatched_movies: list[VODEntry] = []  # Movies/Docs NOT on disk
+    unmatched_tv: list[VODEntry] = []      # TV shows NOT on disk
 
     for e in entries:
         key = _entry_key(e)
@@ -210,6 +297,20 @@ def run_pipeline():
         else:
             # Movies, Documentaries, everything else
             in_existing = key in existing_movie_keys
+
+        # Build comparison data
+        if e.category == Category.TVSHOW:
+            if in_existing:
+                matched_tv.append(e)
+            else:
+                unmatched_tv.append(e)
+        else:
+            # Movies / Documentaries / Other
+            if in_existing:
+                matched_movies.append(e)
+            else:
+                unmatched_movies.append(e)
+
         if in_existing:
             reused_allowed.append(e)
             logging.debug(f"Reusing local-existing result for {e.raw_title}")
@@ -229,6 +330,32 @@ def run_pipeline():
 
     display.info(f"Cache hits: {len(reused_allowed)} allowed + {len(reused_excluded)} excluded")
     display.info(f"Entries to process: {len(to_check)}")
+
+    # ------------------------------------------------------------------
+    # Step 4b: Write comparison reports (separate movies & TV)
+    # ------------------------------------------------------------------
+    display.rule("Comparison reports")
+
+    display.render_comparison_summary(
+        movies_matched=len(matched_movies),
+        movies_unmatched=len(unmatched_movies),
+        tv_matched=len(matched_tv),
+        tv_unmatched=len(unmatched_tv),
+        export_mode=export_mode,
+    )
+
+    write_comparison_report_movies(
+        strm_dir / "comparison_report_movies.txt",
+        matched_movies,
+        unmatched_movies,
+        export_mode,
+    )
+    write_comparison_report_tv(
+        strm_dir / "comparison_report_tv.txt",
+        matched_tv,
+        unmatched_tv,
+        export_mode,
+    )
 
     # ------------------------------------------------------------------
     # Step 5: Filter (ignore keywords)
@@ -323,15 +450,18 @@ def run_pipeline():
             abs_path = rel_path
             url = e.url
 
-            existing_set = existing_tv_keys if e.category == Category.TVSHOW else existing_movie_keys
-            if key in existing_set:
-                logging.debug("Skip existing media: %s", e.raw_title)
-                return {
-                    "action": "skipped_existing",
-                    "key": key,
-                    "cat": cat,
-                    "cache_entry": {"url": e.url, "path": None, "allowed": 1},
-                }
+            # In "diff" mode, skip entries already on disk.
+            # In "all" mode, write STRMs even for existing media.
+            if export_mode == "diff":
+                existing_set = existing_tv_keys if e.category == Category.TVSHOW else existing_movie_keys
+                if key in existing_set:
+                    logging.debug("Skip existing media: %s", e.raw_title)
+                    return {
+                        "action": "skipped_existing",
+                        "key": key,
+                        "cat": cat,
+                        "cache_entry": {"url": e.url, "path": None, "allowed": 1},
+                    }
 
             cached = strm_cache.get(key)
             if cached:
@@ -430,6 +560,31 @@ def run_pipeline():
         f"{sync_stats['deleted']} deleted, {sync_stats['total']} total"
     )
     display.info(f"Cache: {sync_stats['updated']} updated, {sync_stats['deleted']} deleted")
+
+    # ------------------------------------------------------------------
+    # Step 8a: Database maintenance (WAL checkpoint, integrity, optimize)
+    # ------------------------------------------------------------------
+    display.rule("Database maintenance")
+    maint_result = cache.maintenance()
+    logging.info(
+        f"DB maintenance done: integrity={maint_result['integrity']}, "
+        f"db_size={maint_result['db_size_bytes']}, wal_size={maint_result['wal_size_bytes']}"
+    )
+    display.info(
+        f"DB maintenance: integrity={maint_result['integrity']}, "
+        f"rows={maint_result['row_counts']}"
+    )
+
+    # ------------------------------------------------------------------
+    # Step 8b: Backup cache database
+    # ------------------------------------------------------------------
+    backup_path = cfg.output_dir / "caches.db.bak"
+    try:
+        cache.backup(backup_path)
+        display.info(f"Cache backed up: {backup_path}")
+    except Exception as e:
+        logging.warning(f"Cache backup failed: {e}")
+        display.warn(f"Cache backup failed: {e}")
 
     # ------------------------------------------------------------------
     # Step 9: Cleanup orphan STRMs

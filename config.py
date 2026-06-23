@@ -24,6 +24,7 @@ class Config:
     movie_group_keywords: List[str] = None
     replay_group_keywords: List[str] = None
     ignore_keywords: Dict[str, List[str]] = None
+    strm_export_mode: str = "diff"
 
     # ------------------------------------------------------------------
     # Derived paths — everything lives under output/
@@ -86,4 +87,5 @@ def load_config(path: Path) -> Config:
         movie_group_keywords=data.get("movie_group_keywords", []),
         replay_group_keywords=data.get("replay_group_keywords", []),
         ignore_keywords=data.get("ignore_keywords", {}),
+        strm_export_mode=data.get("strm_export_mode", "diff"),
     )

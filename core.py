@@ -3,7 +3,9 @@ import os
 import re
 import sqlite3
 import threading
+import time
 import unicodedata
+from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -109,28 +111,111 @@ def canonical_tv_key(show_with_year: str, season: int, episode: int) -> str:
 
 
 import json
-import time
 from typing import Any, Dict, Optional, Tuple
 
+
+class _TimedCache:
+    """Simple TTL-aware in-memory cache backed by OrderedDict for LRU eviction."""
+
+    def __init__(self, maxsize: int = 512, ttl_seconds: float = 60.0):
+        self._maxsize = maxsize
+        self._ttl = ttl_seconds
+        self._data: OrderedDict[str, Tuple[float, Any]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: str) -> Optional[Any]:
+        with self._lock:
+            if key not in self._data:
+                return None
+            ts, value = self._data[key]
+            if time.monotonic() - ts > self._ttl:
+                del self._data[key]
+                return None
+            # Move to end (most-recently-used)
+            self._data.move_to_end(key)
+            return value
+
+    def set(self, key: str, value: Any) -> None:
+        with self._lock:
+            if key in self._data:
+                self._data.move_to_end(key)
+            self._data[key] = (time.monotonic(), value)
+            while len(self._data) > self._maxsize:
+                self._data.popitem(last=False)  # evict LRU
+
+    def invalidate(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._data)
+
+
 class SQLiteCache:
-    def __init__(self, db_path: Path):
+    # Pool size for concurrent reads (WAL mode supports multiple readers)
+    _POOL_SIZE = 3
+
+    def __init__(self, db_path: Path, mem_cache_ttl: float = 120.0):
         # Ensure the parent directory exists before creating the database
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        # Use check_same_thread=False to allow connection sharing across threads
-        self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._lock = threading.RLock()
-        self.conn.execute("PRAGMA journal_mode=WAL;")
+        self.db_path = db_path
+
+        # ------------------------------------------------------------------
+        # Connection pool for concurrent reads
+        # ------------------------------------------------------------------
+        self._pool: list[sqlite3.Connection] = []
+        self._pool_lock = threading.Lock()
+        self._pool_semaphore = threading.BoundedSemaphore(self._POOL_SIZE)
+
+        for _ in range(self._POOL_SIZE):
+            conn = sqlite3.connect(str(db_path), check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA query_only=ON;")  # read-only for pool connections
+            self._pool.append(conn)
+
+        # Single dedicated write connection (serialized via self._lock)
+        self._write_conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._write_conn.execute("PRAGMA journal_mode=WAL;")
+
+        self._lock = threading.RLock()  # write serialization
+
+        # ------------------------------------------------------------------
+        # In-memory read caches (TTL-based)
+        # ------------------------------------------------------------------
+        self._strm_cache_mem = _TimedCache(maxsize=256, ttl_seconds=mem_cache_ttl)
+        self._existing_media_mem = _TimedCache(maxsize=256, ttl_seconds=mem_cache_ttl)
+        self._cache_version = 0  # version tag for consistency across the two caches
+        self._mem_cache_ttl = mem_cache_ttl
+
         self.ensure_tables()
+
+    # ------------------------------------------------------------------
+    # Connection pool context manager for reads
+    # ------------------------------------------------------------------
+    def _acquire_read_conn(self) -> sqlite3.Connection:
+        """Acquire a read-only connection from the pool (blocking up to 5s)."""
+        acquired = self._pool_semaphore.acquire(timeout=5.0)
+        if not acquired:
+            raise RuntimeError("Timed out waiting for a read connection from the pool")
+        with self._pool_lock:
+            return self._pool.pop()
+
+    def _release_read_conn(self, conn: sqlite3.Connection) -> None:
+        """Return a read connection to the pool."""
+        with self._pool_lock:
+            self._pool.append(conn)
+        self._pool_semaphore.release()
 
     def ensure_tables(self):
         with self._lock:
-            self.conn.execute("""
+            self._write_conn.execute("""
                 CREATE TABLE IF NOT EXISTS existing_media (
                     key TEXT PRIMARY KEY,
                     category TEXT
                 )
             """)
-            self.conn.execute("""
+            self._write_conn.execute("""
                 CREATE TABLE IF NOT EXISTS strm_cache (
                     key TEXT PRIMARY KEY,
                     url TEXT,
@@ -138,66 +223,107 @@ class SQLiteCache:
                     allowed INTEGER
                 )
             """)
-            
-            cols = [row[1] for row in self.conn.execute("PRAGMA table_info(strm_cache)")]
+
+            cols = [row[1] for row in self._write_conn.execute("PRAGMA table_info(strm_cache)")]
             if "allowed" not in cols:
-                self.conn.execute("ALTER TABLE strm_cache ADD COLUMN allowed INTEGER")
-            
+                self._write_conn.execute("ALTER TABLE strm_cache ADD COLUMN allowed INTEGER")
+
             # Create indexes for better query performance
-            self.conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_strm_cache_allowed 
+            self._write_conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_strm_cache_allowed
                 ON strm_cache(allowed)
             """)
-            self.conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_strm_cache_url_path 
+            self._write_conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_strm_cache_url_path
                 ON strm_cache(url, path)
             """)
-            
-            # Optimize database settings for better performance
-            self.conn.execute("PRAGMA synchronous = NORMAL;")
-            self.conn.execute("PRAGMA journal_size_limit = 67108864;")  # 64MB
-            self.conn.execute("PRAGMA cache_size = -2000;")  # 2MB cache
-            self.conn.execute("PRAGMA mmap_size = 268435456;")  # 256MB mmap
-            
-            self.conn.commit()
 
+            # Optimize database settings for better performance
+            self._write_conn.execute("PRAGMA synchronous = NORMAL;")
+            self._write_conn.execute("PRAGMA journal_size_limit = 67108864;")  # 64MB
+            self._write_conn.execute("PRAGMA cache_size = -2000;")  # 2MB cache
+            self._write_conn.execute("PRAGMA mmap_size = 268435456;")  # 256MB mmap
+
+            self._write_conn.commit()
+
+    # ------------------------------------------------------------------
+    # Memory cache management
+    # ------------------------------------------------------------------
+    def invalidate_memory_cache(self) -> None:
+        """Clear all in-memory caches (call after any write operation)."""
+        self._strm_cache_mem.invalidate()
+        self._existing_media_mem.invalidate()
+        with self._lock:
+            self._cache_version += 1
+
+    # ------------------------------------------------------------------
+    # existing_media table
+    # ------------------------------------------------------------------
     def replace_existing_media(self, entries: Dict[str, str]):
         with self._lock:
-            self.conn.execute("DELETE FROM existing_media")
-            self.conn.executemany(
+            self._write_conn.execute("DELETE FROM existing_media")
+            self._write_conn.executemany(
                 "INSERT INTO existing_media (key, category) VALUES (?, ?)",
                 ((k, v) for k, v in entries.items()),
             )
-            self.conn.commit()
+            self._write_conn.commit()
+        self.invalidate_memory_cache()
 
     def existing_media_dict(self) -> Dict[str, str]:
-        with self._lock:
-            return {
-                row[0]: row[1]
-                for row in self.conn.execute("SELECT key, category FROM existing_media")
-            }
+        # Check memory cache first
+        cache_version = self._cache_version
+        cached = self._existing_media_mem.get(str(cache_version))
+        if cached is not None:
+            return cached
 
+        conn = self._acquire_read_conn()
+        try:
+            result = {
+                row[0]: row[1]
+                for row in conn.execute("SELECT key, category FROM existing_media")
+            }
+        finally:
+            self._release_read_conn(conn)
+
+        self._existing_media_mem.set(str(cache_version), result)
+        return result
+
+    # ------------------------------------------------------------------
+    # strm_cache table
+    # ------------------------------------------------------------------
     def strm_cache_dict(self) -> Dict[str, Dict[str, Optional[str]]]:
-        with self._lock:
+        # Check memory cache first
+        cache_version = self._cache_version
+        cached = self._strm_cache_mem.get(str(cache_version))
+        if cached is not None:
+            return cached
+
+        conn = self._acquire_read_conn()
+        try:
             d: Dict[str, Dict[str, Optional[str]]] = {}
-            for key, url, path, allowed in self.conn.execute(
+            for key, url, path, allowed in conn.execute(
                 "SELECT key, url, path, allowed FROM strm_cache"
             ):
                 d[key] = {"url": url, "path": path, "allowed": allowed}
-            return d
+        finally:
+            self._release_read_conn(conn)
+
+        self._strm_cache_mem.set(str(cache_version), d)
+        return d
 
     def replace_strm_cache(self, cache: Dict[str, Dict[str, Optional[str]]]):
         """Replace entire cache with new data (legacy method)."""
         with self._lock:
-            self.conn.execute("DELETE FROM strm_cache")
+            self._write_conn.execute("DELETE FROM strm_cache")
             rows = [
                 (k, v.get("url"), v.get("path"), v.get("allowed"))
                 for k, v in cache.items()
             ]
-            self.conn.executemany(
+            self._write_conn.executemany(
                 "INSERT OR REPLACE INTO strm_cache (key, url, path, allowed) VALUES (?, ?, ?, ?)", rows
             )
-            self.conn.commit()
+            self._write_conn.commit()
+        self.invalidate_memory_cache()
 
     def sync_strm_cache(self, new_cache: Dict[str, Dict[str, Optional[str]]]):
         """
@@ -207,11 +333,11 @@ class SQLiteCache:
         with self._lock:
             # Get current cache from database
             current = {}
-            for key, url, path, allowed in self.conn.execute(
+            for key, url, path, allowed in self._write_conn.execute(
                 "SELECT key, url, path, allowed FROM strm_cache"
             ):
                 current[key] = {"url": url, "path": path, "allowed": allowed}
-            
+
             # Find entries to update or insert
             to_update = []
             for key, new_data in new_cache.items():
@@ -225,23 +351,24 @@ class SQLiteCache:
                         old_data.get("path") != new_data.get("path") or
                         old_data.get("allowed") != new_data.get("allowed")):
                         to_update.append((key, new_data.get("url"), new_data.get("path"), new_data.get("allowed")))
-            
+
             # Find entries to delete (present in current but not in new_cache)
             to_delete = [key for key in current if key not in new_cache]
-            
+
             # Execute updates in a single transaction
             if to_update:
-                self.conn.executemany(
+                self._write_conn.executemany(
                     "INSERT OR REPLACE INTO strm_cache (key, url, path, allowed) VALUES (?, ?, ?, ?)",
                     to_update
                 )
-            
+
             if to_delete:
                 placeholders = ','.join(['?'] * len(to_delete))
-                self.conn.execute(f"DELETE FROM strm_cache WHERE key IN ({placeholders})", to_delete)
-            
-            self.conn.commit()
-            
+                self._write_conn.execute(f"DELETE FROM strm_cache WHERE key IN ({placeholders})", to_delete)
+
+            self._write_conn.commit()
+            self.invalidate_memory_cache()
+
             # Return statistics for logging
             return {
                 "updated": len(to_update),
@@ -253,16 +380,229 @@ class SQLiteCache:
         self, key: str, url: str, path: Optional[str], allowed: Optional[int]
     ):
         with self._lock:
-            self.conn.execute(
+            self._write_conn.execute(
                 "INSERT OR REPLACE INTO strm_cache (key, url, path, allowed) VALUES (?, ?, ?, ?)",
                 (key, url, path, allowed),
             )
-            self.conn.commit()
+            self._write_conn.commit()
+        self.invalidate_memory_cache()
 
+    # ------------------------------------------------------------------
+    # Maintenance: WAL checkpoint, integrity check, optimize
+    # ------------------------------------------------------------------
+    def maintenance(self) -> Dict[str, Any]:
+        """
+        Run periodic database maintenance:
+        - WAL checkpoint (TRUNCATE)
+        - Integrity check
+        - OPTIMIZE
+        Returns a dict with diagnostic results.
+        """
+        result: Dict[str, Any] = {
+            "wal_checkpoint": None,
+            "integrity": None,
+            "optimize": None,
+            "db_size_bytes": None,
+            "wal_size_bytes": None,
+            "row_counts": {},
+        }
+
+        with self._lock:
+            # WAL checkpoint
+            try:
+                cur = self._write_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                result["wal_checkpoint"] = dict(
+                    zip(["busy", "log", "checkpointed"], cur.fetchall())
+                )
+            except Exception as e:
+                result["wal_checkpoint"] = {"error": str(e)}
+
+            # Integrity check
+            try:
+                cur = self._write_conn.execute("PRAGMA integrity_check")
+                rows = cur.fetchall()
+                result["integrity"] = "ok" if len(rows) == 1 and rows[0][0] == "ok" else rows
+            except Exception as e:
+                result["integrity"] = {"error": str(e)}
+
+            # OPTIMIZE
+            try:
+                self._write_conn.execute("PRAGMA optimize")
+                result["optimize"] = True
+            except Exception as e:
+                result["optimize"] = {"error": str(e)}
+
+            # Database file sizes
+            if self.db_path.exists():
+                result["db_size_bytes"] = self.db_path.stat().st_size
+            wal_path = Path(str(self.db_path) + "-wal")
+            if wal_path.exists():
+                result["wal_size_bytes"] = wal_path.stat().st_size
+
+            # Row counts
+            for table in ("existing_media", "strm_cache"):
+                cur = self._write_conn.execute(f"SELECT COUNT(*) FROM {table}")
+                result["row_counts"][table] = cur.fetchone()[0]
+
+            self._write_conn.commit()
+
+        logging.info(
+            "DB maintenance: integrity=%s, db_size=%s, wal_size=%s, rows=%s",
+            result["integrity"],
+            result["db_size_bytes"],
+            result["wal_size_bytes"],
+            result["row_counts"],
+        )
+        return result
+
+    # ------------------------------------------------------------------
+    # Backup & restore
+    # ------------------------------------------------------------------
+    def backup(self, destination: Path, max_backups: int = 3) -> Path:
+        """
+        Perform an atomic online backup using sqlite3's built-in backup API.
+        Rotates backups: destination -> .bak.1 -> .bak.2 -> ...
+        """
+        import shutil
+
+        # Rotate existing backups
+        for i in range(max_backups - 1, 0, -1):
+            old = Path(str(destination) + f".{i}" if i > 1 else str(destination))
+            new = Path(str(destination) + f".{i + 1}")
+            if old.exists():
+                try:
+                    shutil.move(str(old), str(new))
+                except Exception as e:
+                    logging.warning(f"Failed to rotate backup {old} -> {new}: {e}")
+
+        # Rename current backup to .1 (first rotation slot)
+        if destination.exists():
+            bak1 = Path(str(destination) + ".1")
+            try:
+                shutil.move(str(destination), str(bak1))
+            except Exception as e:
+                logging.warning(f"Failed to rotate backup {destination} -> {bak1}: {e}")
+
+        # Run online backup from the write connection
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        backup_conn = sqlite3.connect(str(destination))
+
+        with self._lock:
+            self._write_conn.backup(backup_conn)
+            backup_conn.execute("PRAGMA optimize")
+            backup_conn.close()
+
+        backup_size = destination.stat().st_size if destination.exists() else 0
+        logging.info(f"Cache backup complete: {destination} ({backup_size} bytes)")
+        return destination
+
+    def restore_from_backup(self, source: Path) -> bool:
+        """
+        Restore the database from a backup file.
+        WARNING: This replaces the current database entirely.
+        Returns True on success, False on failure.
+        """
+        if not source.exists():
+            logging.error(f"Backup file not found: {source}")
+            return False
+
+        import shutil
+
+        with self._lock:
+            # Close all connections
+            self._release_all_read_conns()
+            self._write_conn.close()
+
+            try:
+                # Replace database with backup
+                shutil.copy2(str(source), str(self.db_path))
+                logging.info(f"Restored database from backup: {source}")
+            except Exception as e:
+                logging.error(f"Failed to restore from backup: {e}")
+                return False
+            finally:
+                # Re-open connections
+                self._write_conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+                self._write_conn.execute("PRAGMA journal_mode=WAL;")
+                with self._pool_lock:
+                    self._pool = [
+                        self._make_read_conn()
+                        for _ in range(self._POOL_SIZE)
+                    ]
+                self.ensure_tables()
+
+        self.invalidate_memory_cache()
+        return True
+
+    def _make_read_conn(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA query_only=ON;")
+        return conn
+
+    def _release_all_read_conns(self) -> None:
+        """Close all pooled read connections (used before restore)."""
+        with self._pool_lock:
+            for conn in self._pool:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._pool.clear()
+            # Reset semaphore
+            for _ in range(self._POOL_SIZE):
+                try:
+                    self._pool_semaphore.acquire(blocking=False)
+                except Exception:
+                    pass
+
+    # ------------------------------------------------------------------
+    # Database statistics (for API/monitoring)
+    # ------------------------------------------------------------------
+    def stats(self) -> Dict[str, Any]:
+        """Return a dictionary of database statistics."""
+        conn = self._acquire_read_conn()
+        try:
+            row_counts = {}
+            for table in ("existing_media", "strm_cache"):
+                cur = conn.execute(f"SELECT COUNT(*) FROM {table}")
+                row_counts[table] = cur.fetchone()[0]
+
+            cur = conn.execute("SELECT COUNT(*) FROM strm_cache WHERE allowed = 1")
+            allowed_count = cur.fetchone()[0]
+            cur = conn.execute("SELECT COUNT(*) FROM strm_cache WHERE allowed = 0")
+            excluded_count = cur.fetchone()[0]
+            cur = conn.execute("SELECT COUNT(*) FROM strm_cache WHERE path IS NOT NULL AND allowed = 1")
+            with_path_count = cur.fetchone()[0]
+        finally:
+            self._release_read_conn(conn)
+
+        db_size = self.db_path.stat().st_size if self.db_path.exists() else 0
+        wal_path = Path(str(self.db_path) + "-wal")
+        wal_size = wal_path.stat().st_size if wal_path.exists() else 0
+
+        return {
+            "db_path": str(self.db_path),
+            "db_size_bytes": db_size,
+            "wal_size_bytes": wal_size,
+            "row_counts": row_counts,
+            "strm_cache_allowed": allowed_count,
+            "strm_cache_excluded": excluded_count,
+            "strm_cache_with_path": with_path_count,
+            "mem_cache_size": len(self._strm_cache_mem) + len(self._existing_media_mem),
+        }
 
     def close(self):
         with self._lock:
-            self.conn.close()
+            # Close pooled read connections
+            with self._pool_lock:
+                for conn in self._pool:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                self._pool.clear()
+            self._write_conn.close()
 
 
 def _extract_season_episode(name: str) -> Optional[Tuple[int, int]]:
