@@ -1,13 +1,18 @@
 {
   "m3u": "/path to/VOD.m3u",
-  "existing_media_dirs": [
-    "/media/Existing"
+  "movie_media_dirs": [
+    "/media/Movies"
+  ],
+  "tv_media_dirs": [
+    "/media/TV Shows"
   ],
   "dry_run": false,
   "max_workers": 8,
   "write_non_us_report": true,
   "notes": {
     "m3u": "Single string (file path or URL) or a list [\"movies.m3u\", \"series.m3u\"] to merge multiple playlists.",
+    "movie_media_dirs": "Directories scanned for existing movie files. Movie M3U entries already on disk will be skipped.",
+    "tv_media_dirs": "Directories scanned for existing TV show files. TV M3U entries already on disk will be skipped.",
     "output": "All output (logs, cache, STRM files) is written to the 'output/' directory at the project root.",
     "write_non_us_report": "If true, titles excluded by ignore_keywords will be written to excluded_entries.txt for review."
   },

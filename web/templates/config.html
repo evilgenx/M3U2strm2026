@@ -37,9 +37,15 @@
         </div>
 
         <div class="form-group">
-            <label for="existing_media_dirs">Existing Media Directories</label>
-            <textarea id="existing_media_dirs" name="existing_media_dirs" rows="3" placeholder="One directory per line">{{ '\n'.join(config_data.get('existing_media_dirs', [])) }}</textarea>
-            <span class="help">Directories to scan for existing media files (movies, TV shows, documentaries).</span>
+            <label for="movie_media_dirs">Movie Media Directories</label>
+            <textarea id="movie_media_dirs" name="movie_media_dirs" rows="2" placeholder="One directory per line">{{ '\n'.join(config_data.get('movie_media_dirs', [])) }}</textarea>
+            <span class="help">Directories scanned for existing movie files. M3U movies already on disk will be skipped.</span>
+        </div>
+
+        <div class="form-group">
+            <label for="tv_media_dirs">TV Media Directories</label>
+            <textarea id="tv_media_dirs" name="tv_media_dirs" rows="2" placeholder="One directory per line">{{ '\n'.join(config_data.get('tv_media_dirs', [])) }}</textarea>
+            <span class="help">Directories scanned for existing TV show files. M3U TV episodes already on disk will be skipped.</span>
         </div>
 
         <div class="form-row">

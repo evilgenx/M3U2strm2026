@@ -28,8 +28,13 @@
             {% endif %}
         </td></tr>
         <tr><td class="label">Output Directory</td><td>{{ config.output_dir }}</td></tr>
-        <tr><td class="label">Media Directories</td><td>
-            {% for d in config.existing_media_dirs %}
+        <tr><td class="label">Movie Directories</td><td>
+            {% for d in config.movie_media_dirs %}
+                {{ d }}<br />
+            {% endfor %}
+        </td></tr>
+        <tr><td class="label">TV Directories</td><td>
+            {% for d in config.tv_media_dirs %}
                 {{ d }}<br />
             {% endfor %}
         </td></tr>

@@ -390,9 +390,14 @@ def _parse_config_form(form: dict) -> dict:
     else:
         data["m3u"] = m3u_lines
 
-    existing_dirs_raw = form.get("existing_media_dirs", "")
-    data["existing_media_dirs"] = [
-        d.strip() for d in existing_dirs_raw.splitlines() if d.strip()
+    movie_dirs_raw = form.get("movie_media_dirs", "")
+    data["movie_media_dirs"] = [
+        d.strip() for d in movie_dirs_raw.splitlines() if d.strip()
+    ]
+
+    tv_dirs_raw = form.get("tv_media_dirs", "")
+    data["tv_media_dirs"] = [
+        d.strip() for d in tv_dirs_raw.splitlines() if d.strip()
     ]
 
     data["dry_run"] = form.get("dry_run") == "1"

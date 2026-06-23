@@ -99,7 +99,8 @@ def show_banner(cfg: "Config") -> None:
         for i, src in enumerate(cfg.m3u, 1):
             cfg_lines.append(f"    [{i}]     : {src}")
     cfg_lines.append(f"  Output    : {cfg.output_dir}")
-    cfg_lines.append(f"  Media dirs: {len(cfg.existing_media_dirs)}")
+    cfg_lines.append(f"  Movie dirs: {len(cfg.movie_media_dirs)}")
+    cfg_lines.append(f"  TV dirs   : {len(cfg.tv_media_dirs)}")
     cfg_lines.append(f"  Workers   : {cfg.max_workers}")
     if cfg.dry_run:
         cfg_lines.append(f"  Mode      : {_style('DRY RUN', 'bold yellow')} (no files written)")

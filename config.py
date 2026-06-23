@@ -14,7 +14,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parent
 @dataclass
 class Config:
     m3u: List[str]
-    existing_media_dirs: List[Path]
+    movie_media_dirs: List[Path]
+    tv_media_dirs: List[Path]
     dry_run: bool = False
     max_workers: Optional[int] = None
     write_non_us_report: bool = True
@@ -61,12 +62,12 @@ def load_config(path: Path) -> Config:
     mw = data.get("max_workers")
     if isinstance(mw, str) and mw.lower() == "max":
         mw = os.cpu_count() or 8
-    if "existing_media_dirs" in data:
-        existing_dirs = [Path(p) for p in data["existing_media_dirs"]]
-    elif "existing_media_dir" in data:
-        existing_dirs = [Path(data["existing_media_dir"])]
-    else:
-        raise KeyError("Config missing 'existing_media_dir' or 'existing_media_dirs'")
+    if "movie_media_dirs" not in data:
+        raise KeyError("Config missing 'movie_media_dirs'")
+    if "tv_media_dirs" not in data:
+        raise KeyError("Config missing 'tv_media_dirs'")
+    movie_dirs = [Path(p) for p in data["movie_media_dirs"]]
+    tv_dirs = [Path(p) for p in data["tv_media_dirs"]]
     raw_m3u = data["m3u"]
     m3u_list: List[str] = (
         [s.strip() for s in raw_m3u.split(",") if s.strip()]
@@ -75,7 +76,8 @@ def load_config(path: Path) -> Config:
     )
     return Config(
         m3u=m3u_list,
-        existing_media_dirs=existing_dirs,
+        movie_media_dirs=movie_dirs,
+        tv_media_dirs=tv_dirs,
         dry_run=_coerce_bool(data.get("dry_run", False)),
         max_workers=mw,
         write_non_us_report=_coerce_bool(data.get("write_non_us_report", True)),

@@ -36,7 +36,8 @@ Syncs an IPTV VOD playlist with local media using `.strm` files. Scans local med
 |-----|---------|
 | `m3u` | Path to VOD.m3u playlist |
 | `output_dir` | Where `.strm` files are written |
-| `existing_media_dirs` | Directories to scan for local media |
+| `movie_media_dirs` | Directories scanned for existing movie files |
+| `tv_media_dirs` | Directories scanned for existing TV show files |
 | `ignore_keywords` | Keywords to exclude (movies/tvshows) |
 | `dry_run` | Test mode (no files written) |
 

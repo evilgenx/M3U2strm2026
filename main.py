@@ -99,26 +99,38 @@ def run_pipeline():
     write_non_us_report = cfg.write_non_us_report
 
     # ------------------------------------------------------------------
-    # Step 1: Scan media directories
+    # Step 1: Scan media directories (separate for movies + TV)
     # ------------------------------------------------------------------
     display.rule("Starting media scan")
 
     progress = display.ProgressManager()
+    total_dirs = len(cfg.movie_media_dirs) + len(cfg.tv_media_dirs)
+
     with progress:
-        scan_task = progress.add_task("Scanning media directories", total=len(cfg.existing_media_dirs))
+        scan_task = progress.add_task("Scanning media directories", total=total_dirs)
         cache = SQLiteCache(db_path)
-        existing = {}
+        existing_movie = {}
+        existing_tv = {}
 
-        for d in cfg.existing_media_dirs:
+        for d in cfg.movie_media_dirs:
             dir_media = build_existing_media_cache(Path(d))
-            existing.update(dir_media)
-            progress.update(scan_task, advance=1, description=f"Scanned: {d} ({len(dir_media)} items)")
+            existing_movie.update(dir_media)
+            progress.update(scan_task, advance=1, description=f"Scanned movies: {d} ({len(dir_media)} items)")
 
-        progress.complete(scan_task, description=f"{len(existing)} existing media items found")
+        for d in cfg.tv_media_dirs:
+            dir_media = build_existing_media_cache(Path(d))
+            existing_tv.update(dir_media)
+            progress.update(scan_task, advance=1, description=f"Scanned TV: {d} ({len(dir_media)} items)")
 
-    cache.replace_existing_media(existing)
-    existing_keys = set(existing.keys())
-    display.info(f"Cached {len(existing)} existing media entries")
+        progress.complete(scan_task, description=f"{len(existing_movie) + len(existing_tv)} existing media items found")
+
+    # Merge for the combined cache (used by strm sync / cleanup)
+    all_existing = {**existing_movie, **existing_tv}
+    cache.replace_existing_media(all_existing)
+
+    existing_movie_keys = set(existing_movie.keys())
+    existing_tv_keys = set(existing_tv.keys())
+    display.info(f"Cached {len(existing_movie)} movie/doc + {len(existing_tv)} TV existing media entries")
 
     # ------------------------------------------------------------------
     # Step 2: Parse M3U playlist(s)
@@ -192,7 +204,13 @@ def run_pipeline():
 
     for e in entries:
         key = _entry_key(e)
-        if key in existing_keys:
+        # Use type-specific existing key set
+        if e.category == Category.TVSHOW:
+            in_existing = key in existing_tv_keys
+        else:
+            # Movies, Documentaries, everything else
+            in_existing = key in existing_movie_keys
+        if in_existing:
             reused_allowed.append(e)
             logging.debug(f"Reusing local-existing result for {e.raw_title}")
             continue
@@ -305,7 +323,8 @@ def run_pipeline():
             abs_path = rel_path
             url = e.url
 
-            if key in existing_keys:
+            existing_set = existing_tv_keys if e.category == Category.TVSHOW else existing_movie_keys
+            if key in existing_set:
                 logging.debug("Skip existing media: %s", e.raw_title)
                 return {
                     "action": "skipped_existing",
