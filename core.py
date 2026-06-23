@@ -18,7 +18,7 @@ EPISODE_PATTERNS = [
     re.compile(r"(\d{1,2})x(\d{2})", re.IGNORECASE),
 ]
 
-VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".mpg", ".mpeg", ".m4v", ".webm"}
+VIDEO_EXTS = {".strm"}
 
 
 def strip_after_year(text: str) -> str:

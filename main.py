@@ -450,34 +450,31 @@ def run_pipeline():
             abs_path = rel_path
             url = e.url
 
-            # In "diff" mode, skip entries already on disk.
-            # In "all" mode, write STRMs even for existing media.
-            if export_mode == "diff":
-                existing_set = existing_tv_keys if e.category == Category.TVSHOW else existing_movie_keys
-                if key in existing_set:
-                    logging.debug("Skip existing media: %s", e.raw_title)
-                    return {
-                        "action": "skipped_existing",
-                        "key": key,
-                        "cat": cat,
-                        "cache_entry": {"url": e.url, "path": None, "allowed": 1},
-                    }
+            # Determine if this entry is already on disk
+            existing_set = existing_tv_keys if e.category == Category.TVSHOW else existing_movie_keys
+            on_disk = key in existing_set
 
-            cached = strm_cache.get(key)
-            if cached:
-                cached_path = Path(cached.get("path") or "").resolve() if cached.get("path") else None
-                if cached.get("url") == url and cached.get("path") and cached_path == abs_path.resolve():
-                    logging.debug("Skip cached (unchanged): %s", e.raw_title)
-                    return {
-                        "action": "skipped_cached",
-                        "key": key,
-                        "cat": cat,
-                        "cache_entry": {
-                            "url": cached.get("url"),
-                            "path": cached.get("path"),
-                            "allowed": cached.get("allowed", 1),
-                        },
-                    }
+            # In "diff" mode, skip entries already on disk (if URL/path unchanged).
+            # In "all" mode or for unmatched entries, always write the STRM.
+            if export_mode == "diff" and on_disk:
+                cached = strm_cache.get(key)
+                if cached:
+                    cached_path = Path(cached.get("path") or "").resolve() if cached.get("path") else None
+                    if cached.get("url") == url and cached.get("path") and cached_path == abs_path.resolve():
+                        logging.debug("Skip cached (unchanged, on disk): %s", e.raw_title)
+                        return {
+                            "action": "skipped_cached",
+                            "key": key,
+                            "cat": cat,
+                            "cache_entry": {
+                                "url": cached.get("url"),
+                                "path": cached.get("path"),
+                                "allowed": cached.get("allowed", 1),
+                            },
+                        }
+                # On disk but no cache match — fall through to re-write
+                logging.debug("Existing media with changed URL/path, will re-write: %s", e.raw_title)
+                # Fall through to write below
 
             if not cfg.dry_run:
                 write_strm_file(strm_dir, rel_path, url)

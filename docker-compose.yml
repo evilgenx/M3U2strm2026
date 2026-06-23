@@ -18,8 +18,8 @@ services:
       - ./config.json:/app/config.json
       - ./output:/app/output
       # Mount existing media directories (read-only recommended)
-      - /media/Movies:/media/Movies:ro
-      - /media/TV Shows:/media/TV Shows:ro
+      - /media/b/Movies_VOD:/media/Movies:ro
+      - /media/c/TV_Shows_VOD:/media/TV Shows:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8585}/api/status')"]
