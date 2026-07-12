@@ -403,8 +403,9 @@ def run_pipeline():
         )
 
         if not e.year:
-            e.year = extract_year(e.raw_title)
-            if e.year:
+            year_str = extract_year(e.raw_title)
+            if year_str is not None:
+                e.year = int(year_str)
                 logging.debug("Extracted year=%s from raw_title %r", e.year, e.raw_title)
 
         ignore = ignore_keywords.get("tvshows" if e.category == Category.TVSHOW else "movies", [])

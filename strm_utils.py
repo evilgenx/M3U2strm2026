@@ -3,7 +3,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 from core import extract_year
 
 if TYPE_CHECKING:
@@ -31,13 +31,13 @@ def write_strm_file(base_dir: Path, relative_path: Path, url: str) -> Path:
     return target
 
 
-def cleanup_strm_tree(base_dir: Path, cache: Dict[str, Dict[str, str]]):
+def cleanup_strm_tree(base_dir: Path, cache: Dict[str, Dict[str, Any]]):
     if not base_dir.exists():
         return
     if not cache:
         logging.warning("Cache is empty — skipping cleanup to avoid deleting everything.")
         return
-    valid_paths = {Path(d.get("path")) for d in cache.values() if d.get("path")}
+    valid_paths = {Path(p) for d in cache.values() if (p := d.get("path"))}
     removed_files = 0
     removed_dirs = 0
     protected_roots = {"Movies", "TV Shows", "Documentaries"}

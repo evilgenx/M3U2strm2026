@@ -291,7 +291,7 @@ class SQLiteCache:
     # ------------------------------------------------------------------
     # strm_cache table
     # ------------------------------------------------------------------
-    def strm_cache_dict(self) -> Dict[str, Dict[str, Optional[str]]]:
+    def strm_cache_dict(self) -> Dict[str, Dict[str, Any]]:
         # Check memory cache first
         cache_version = self._cache_version
         cached = self._strm_cache_mem.get(str(cache_version))
@@ -311,7 +311,7 @@ class SQLiteCache:
         self._strm_cache_mem.set(str(cache_version), d)
         return d
 
-    def replace_strm_cache(self, cache: Dict[str, Dict[str, Optional[str]]]):
+    def replace_strm_cache(self, cache: Dict[str, Dict[str, Any]]):
         """Replace entire cache with new data (legacy method)."""
         with self._lock:
             self._write_conn.execute("DELETE FROM strm_cache")
@@ -325,7 +325,7 @@ class SQLiteCache:
             self._write_conn.commit()
         self.invalidate_memory_cache()
 
-    def sync_strm_cache(self, new_cache: Dict[str, Dict[str, Optional[str]]]):
+    def sync_strm_cache(self, new_cache: Dict[str, Dict[str, Any]]):
         """
         Synchronize cache incrementally by updating only changed entries.
         More efficient than replace_strm_cache for large datasets.
