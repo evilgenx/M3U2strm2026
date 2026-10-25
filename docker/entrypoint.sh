@@ -38,7 +38,7 @@ export OUTPUT_DIR
 
 echo "Starting Gunicorn on 0.0.0.0:${PORT:-8080}..."
 exec gunicorn --bind "0.0.0.0:${PORT:-8080}" \
-    --workers 2 \
+    --workers 1 \
     --threads 4 \
     --worker-class gthread \
     --timeout 120 \

@@ -139,10 +139,12 @@ def write_comparison_report_tv(
     display.info(f"TV comparison report: {len(matched)} matched, {len(unmatched)} unmatched — {path}")
 
 
-def run_pipeline():
+def run_pipeline(dry_run: bool = False):
     start_time = time.monotonic()
 
     cfg = config.load_config(Path(__file__).parent / "config.json")
+    # Either the config file or the caller (e.g. web "dry run" button) can enable dry run
+    cfg.dry_run = cfg.dry_run or dry_run
 
     # ------------------------------------------------------------------
     # Logging: file handler only — console is handled by rich

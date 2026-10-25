@@ -56,6 +56,19 @@ def _coerce_bool(val, default=False) -> bool:
     return default
 
 
+def _split_dirs(raw) -> List[Path]:
+    """Accept a comma-separated string, or a list whose items may themselves contain commas."""
+    values = [raw] if isinstance(raw, str) else list(raw)
+    dirs: List[Path] = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        for part in value.split(","):
+            if part.strip():
+                dirs.append(Path(part.strip()))
+    return dirs
+
+
 def load_config(path: Path) -> Config:
     if not path.exists():
         raise FileNotFoundError(f"Configuration file not found: {path}")
@@ -67,8 +80,8 @@ def load_config(path: Path) -> Config:
         raise KeyError("Config missing 'movie_media_dirs'")
     if "tv_media_dirs" not in data:
         raise KeyError("Config missing 'tv_media_dirs'")
-    movie_dirs = [Path(p) for p in data["movie_media_dirs"]]
-    tv_dirs = [Path(p) for p in data["tv_media_dirs"]]
+    movie_dirs = _split_dirs(data["movie_media_dirs"])
+    tv_dirs = _split_dirs(data["tv_media_dirs"])
     raw_m3u = data["m3u"]
     m3u_list: List[str] = (
         [s.strip() for s in raw_m3u.split(",") if s.strip()]

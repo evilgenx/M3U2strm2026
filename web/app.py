@@ -146,7 +146,7 @@ def _run_pipeline_background(dry_run: bool = False) -> None:
 
             start = time.monotonic()
 
-            run_pipeline()
+            run_pipeline(dry_run=dry_run)
 
             elapsed = time.monotonic() - start
 
