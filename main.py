@@ -465,27 +465,18 @@ def run_pipeline(dry_run: bool = False):
             # for consistent on-disk detection
             on_disk = key in matched_keys
 
-            # In "diff" mode, skip entries already on disk (if URL/path unchanged).
-            # In "all" mode or for unmatched entries, always write the STRM.
+            # In "diff" mode, anything already in the local media folders is skipped,
+            # regardless of whether the STRM cache has a row for it. The cache is
+            # only used to decide what to write for entries NOT on disk.
+            # In "all" mode, every entry is written.
             if export_mode == "diff" and on_disk:
-                cached = strm_cache.get(key)
-                if cached:
-                    cached_path = Path(cached.get("path") or "").resolve() if cached.get("path") else None
-                    if cached.get("url") == url and cached.get("path") and cached_path == abs_path.resolve():
-                        logging.debug("Skip cached (unchanged, on disk): %s", e.raw_title)
-                        return {
-                            "action": "skipped_cached",
-                            "key": key,
-                            "cat": cat,
-                            "cache_entry": {
-                                "url": cached.get("url"),
-                                "path": cached.get("path"),
-                                "allowed": cached.get("allowed", 1),
-                            },
-                        }
-                # On disk but no cache match — fall through to re-write
-                logging.debug("Existing media with changed URL/path, will re-write: %s", e.raw_title)
-                # Fall through to write below
+                logging.debug("Skip existing media: %s", e.raw_title)
+                return {
+                    "action": "skipped_existing",
+                    "key": key,
+                    "cat": cat,
+                    "cache_entry": {"url": url, "path": None, "allowed": 1},
+                }
 
             if not cfg.dry_run:
                 write_strm_file(strm_dir, rel_path, url)
@@ -598,8 +589,12 @@ def run_pipeline(dry_run: bool = False):
     # Step 9: Cleanup orphan STRMs
     # ------------------------------------------------------------------
     display.rule("Cleaning orphan STRMs")
-    logging.info("Cleaning up orphan STRMs...")
-    cleanup_strm_tree(strm_dir, new_cache)
+    if cfg.dry_run:
+        logging.info("DRY RUN — skipping orphan STRM cleanup")
+        display.info("DRY RUN — orphan STRM cleanup skipped")
+    else:
+        logging.info("Cleaning up orphan STRMs...")
+        cleanup_strm_tree(strm_dir, new_cache)
 
     # ------------------------------------------------------------------
     # Step 10: Final summary
